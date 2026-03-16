@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline - LumiPods</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 24px;
+      padding: 48px;
+      text-align: center;
+      max-width: 400px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    }
+    .icon { font-size: 64px; margin-bottom: 24px; }
+    h1 { color: #1f2937; font-size: 24px; margin-bottom: 12px; }
+    p { color: #6b7280; line-height: 1.6; margin-bottom: 24px; }
+    .btn {
+      display: inline-block;
+      background: #4f46e5;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #4338ca; }
+    .tip {
+      margin-top: 24px;
+      padding: 16px;
+      background: #f3f4f6;
+      border-radius: 12px;
+      font-size: 14px;
+      color: #4b5563;
+    }
+    .tip strong { color: #1f2937; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">📡</div>
+    <h1>You're Offline</h1>
+    <p>Don't worry! Your learning progress is saved locally and will sync when you're back online.</p>
+    <a href="/" class="btn" onclick="window.location.reload(); return false;">Try Again</a>
+    <div class="tip">
+      <strong>💡 Tip:</strong> You can still review your downloaded materials and practice with flashcards while offline!
+    </div>
+  </div>
+  <script>
+    // Auto-reload when back online
+    window.addEventListener('online', () => window.location.reload());
+  </script>
+</body>
+</html>

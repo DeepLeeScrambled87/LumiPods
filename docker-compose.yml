@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  lumipods-ai-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai-proxy
+    container_name: lumipods-ai-proxy
+    environment:
+      - PORT=8787
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com}
+    restart: unless-stopped
+
+  # PocketBase backend
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    container_name: lumipods-pocketbase
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - pocketbase_data:/pb_data
+      - ./pb_migrations:/pb_migrations:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Production frontend
+  lumipods:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lumipods-frontend
+    ports:
+      - "8888:80"
+    restart: unless-stopped
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+      lumipods-ai-proxy:
+        condition: service_started
+    environment:
+      - VITE_POCKETBASE_URL=http://localhost:8090
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Development with hot reload
+  lumipods-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src:/app/src:ro
+      - ./public:/app/public:ro
+      - ./index.html:/app/index.html:ro
+    environment:
+      - NODE_ENV=development
+      - VITE_POCKETBASE_URL=http://localhost:8090
+    depends_on:
+      - pocketbase
+    profiles:
+      - dev
+
+volumes:
+  pocketbase_data:

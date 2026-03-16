@@ -1,0 +1,1423 @@
+[
+  {
+    "name": "families",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.body.owner = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "owner",
+        "type": "relation",
+        "collectionId": "_pb_users_auth_",
+        "maxSelect": 1
+      },
+      {
+        "name": "settings",
+        "type": "json"
+      },
+      {
+        "name": "currentPodId",
+        "type": "text"
+      },
+      {
+        "name": "currentWeek",
+        "type": "number",
+        "min": 1,
+        "max": 52
+      },
+      {
+        "name": "timezone",
+        "type": "text"
+      },
+      {
+        "name": "schoolYearStart",
+        "type": "number",
+        "min": 1,
+        "max": 12
+      }
+    ],
+    "id": "pbc_3641796565"
+  },
+  {
+    "name": "learners",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "age",
+        "type": "number",
+        "required": true,
+        "min": 4,
+        "max": 18
+      },
+      {
+        "name": "skillLevel",
+        "type": "select",
+        "required": true,
+        "values": [
+          "foundation",
+          "intermediate",
+          "advanced",
+          "pro"
+        ]
+      },
+      {
+        "name": "avatar",
+        "type": "text"
+      },
+      {
+        "name": "points",
+        "type": "number",
+        "min": 0
+      },
+      {
+        "name": "streakDays",
+        "type": "number",
+        "min": 0
+      },
+      {
+        "name": "preferences",
+        "type": "json"
+      },
+      {
+        "name": "pin",
+        "type": "text"
+      }
+    ],
+    "id": "pbc_2063371423"
+  },
+  {
+    "name": "schedules",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "dayOfWeek",
+        "type": "number",
+        "min": 0,
+        "max": 6
+      },
+      {
+        "name": "isTemplate",
+        "type": "bool"
+      },
+      {
+        "name": "blocks",
+        "type": "json"
+      }
+    ],
+    "id": "pbc_1427126806"
+  },
+  {
+    "name": "blocks",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && schedule.family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && schedule.family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.schedules.id ?= @request.body.schedule && @collection.schedules.family.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && schedule.family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && schedule.family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "schedule",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_1427126806",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "title",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "subject",
+        "type": "select",
+        "values": [
+          "math",
+          "science",
+          "language",
+          "french",
+          "coding",
+          "art",
+          "music",
+          "pe",
+          "vr",
+          "reading",
+          "writing",
+          "social-studies",
+          "life-skills",
+          "free-choice"
+        ]
+      },
+      {
+        "name": "type",
+        "type": "select",
+        "values": [
+          "core",
+          "practice",
+          "project",
+          "vr",
+          "french",
+          "break",
+          "movement",
+          "free"
+        ]
+      },
+      {
+        "name": "startTime",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "duration",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "values": [
+          "pending",
+          "in-progress",
+          "completed",
+          "skipped",
+          "delayed"
+        ]
+      },
+      {
+        "name": "delayedUntil",
+        "type": "text"
+      },
+      {
+        "name": "podId",
+        "type": "text"
+      },
+      {
+        "name": "weekNumber",
+        "type": "number"
+      },
+      {
+        "name": "description",
+        "type": "text"
+      },
+      {
+        "name": "materials",
+        "type": "json"
+      },
+      {
+        "name": "resources",
+        "type": "json"
+      },
+      {
+        "name": "completedAt",
+        "type": "date"
+      },
+      {
+        "name": "focusMinutes",
+        "type": "number"
+      },
+      {
+        "name": "pointsEarned",
+        "type": "number"
+      }
+    ],
+    "id": "pbc_4194232374"
+  },
+  {
+    "name": "vr_sessions",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "appId",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "appName",
+        "type": "text"
+      },
+      {
+        "name": "duration",
+        "type": "number"
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "values": [
+          "scheduled",
+          "completed",
+          "skipped"
+        ]
+      },
+      {
+        "name": "notes",
+        "type": "text"
+      },
+      {
+        "name": "learningObjectives",
+        "type": "json"
+      },
+      {
+        "name": "completedAt",
+        "type": "date"
+      }
+    ],
+    "id": "pbc_771003216"
+  },
+  {
+    "name": "french_lessons",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "topic",
+        "type": "text"
+      },
+      {
+        "name": "vocabulary",
+        "type": "json"
+      },
+      {
+        "name": "phrases",
+        "type": "json"
+      },
+      {
+        "name": "duration",
+        "type": "number"
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "values": [
+          "scheduled",
+          "completed",
+          "skipped"
+        ]
+      },
+      {
+        "name": "practiceType",
+        "type": "select",
+        "values": [
+          "vocabulary",
+          "conversation",
+          "reading",
+          "writing",
+          "listening",
+          "culture"
+        ]
+      },
+      {
+        "name": "aiConversationLog",
+        "type": "json"
+      },
+      {
+        "name": "completedAt",
+        "type": "date"
+      }
+    ],
+    "id": "pbc_435625252"
+  },
+  {
+    "name": "artifacts",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "type",
+        "type": "select",
+        "required": true,
+        "values": [
+          "photo",
+          "video",
+          "link",
+          "document",
+          "code",
+          "presentation",
+          "project"
+        ]
+      },
+      {
+        "name": "title",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "description",
+        "type": "text"
+      },
+      {
+        "name": "reflection",
+        "type": "text"
+      },
+      {
+        "name": "file",
+        "type": "file",
+        "maxSelect": 1,
+        "maxSize": 52428800
+      },
+      {
+        "name": "thumbnailUrl",
+        "type": "url"
+      },
+      {
+        "name": "externalUrl",
+        "type": "url"
+      },
+      {
+        "name": "tags",
+        "type": "json"
+      },
+      {
+        "name": "competencies",
+        "type": "json"
+      },
+      {
+        "name": "skillLevel",
+        "type": "select",
+        "values": [
+          "foundation",
+          "intermediate",
+          "advanced",
+          "pro"
+        ]
+      },
+      {
+        "name": "visibility",
+        "type": "select",
+        "values": [
+          "private",
+          "family",
+          "community",
+          "public"
+        ]
+      },
+      {
+        "name": "isFeatured",
+        "type": "bool"
+      },
+      {
+        "name": "podId",
+        "type": "text"
+      },
+      {
+        "name": "blockId",
+        "type": "text"
+      },
+      {
+        "name": "weekNumber",
+        "type": "number"
+      },
+      {
+        "name": "iterations",
+        "type": "json"
+      },
+      {
+        "name": "feedback",
+        "type": "json"
+      },
+      {
+        "name": "rubricScore",
+        "type": "json"
+      },
+      {
+        "name": "publishedAt",
+        "type": "date"
+      }
+    ],
+    "id": "pbc_1303748624"
+  },
+  {
+    "name": "progress",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "podId",
+        "type": "text"
+      },
+      {
+        "name": "weekNumber",
+        "type": "number"
+      },
+      {
+        "name": "blocksCompleted",
+        "type": "number"
+      },
+      {
+        "name": "blocksTotal",
+        "type": "number"
+      },
+      {
+        "name": "focusMinutes",
+        "type": "number"
+      },
+      {
+        "name": "pointsEarned",
+        "type": "number"
+      },
+      {
+        "name": "artifactsCreated",
+        "type": "number"
+      },
+      {
+        "name": "streakMaintained",
+        "type": "bool"
+      },
+      {
+        "name": "frenchMinutes",
+        "type": "number"
+      },
+      {
+        "name": "vrMinutes",
+        "type": "number"
+      }
+    ],
+    "id": "pbc_1649388127"
+  },
+  {
+    "name": "competencies",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && learner.family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && learner.family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.learners.id ?= @request.body.learner && @collection.learners.family.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && learner.family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && learner.family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "domain",
+        "type": "select",
+        "required": true,
+        "values": [
+          "critical-thinking",
+          "communication",
+          "collaboration",
+          "creativity",
+          "scientific-inquiry",
+          "mathematical-reasoning",
+          "digital-literacy",
+          "self-direction",
+          "french-language"
+        ]
+      },
+      {
+        "name": "level",
+        "type": "select",
+        "required": true,
+        "values": [
+          "beginning",
+          "developing",
+          "proficient",
+          "expert"
+        ]
+      },
+      {
+        "name": "evidenceIds",
+        "type": "json"
+      },
+      {
+        "name": "assessedBy",
+        "type": "select",
+        "values": [
+          "self",
+          "parent",
+          "peer",
+          "ai"
+        ]
+      },
+      {
+        "name": "notes",
+        "type": "text"
+      }
+    ],
+    "id": "pbc_622004350"
+  },
+  {
+    "name": "points",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "type",
+        "type": "select",
+        "required": true,
+        "values": [
+          "core_block",
+          "deep_focus",
+          "teamwork",
+          "kindness",
+          "exceptional",
+          "artifact",
+          "streak",
+          "french",
+          "vr"
+        ]
+      },
+      {
+        "name": "points",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "blockId",
+        "type": "text"
+      },
+      {
+        "name": "artifactId",
+        "type": "relation",
+        "collectionId": "pbc_1303748624",
+        "maxSelect": 1
+      },
+      {
+        "name": "description",
+        "type": "text"
+      }
+    ],
+    "id": "pbc_279573351"
+  },
+  {
+    "name": "rewards_redemptions",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "rewardId",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "rewardTitle",
+        "type": "text"
+      },
+      {
+        "name": "pointsSpent",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "values": [
+          "pending",
+          "approved",
+          "fulfilled",
+          "rejected"
+        ]
+      },
+      {
+        "name": "approvedBy",
+        "type": "text"
+      },
+      {
+        "name": "approvedAt",
+        "type": "date"
+      },
+      {
+        "name": "fulfilledAt",
+        "type": "date"
+      },
+      {
+        "name": "notes",
+        "type": "text"
+      }
+    ],
+    "id": "pbc_3863060258"
+  },
+  {
+    "name": "projects",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "podId",
+        "type": "text"
+      },
+      {
+        "name": "title",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "summary",
+        "type": "text"
+      },
+      {
+        "name": "goal",
+        "type": "text"
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "required": true,
+        "values": [
+          "planned",
+          "active",
+          "review",
+          "completed",
+          "archived"
+        ]
+      },
+      {
+        "name": "source",
+        "type": "select",
+        "required": true,
+        "values": [
+          "pod",
+          "side-quest",
+          "external-tool",
+          "custom"
+        ]
+      },
+      {
+        "name": "skillLevel",
+        "type": "select",
+        "values": [
+          "foundation",
+          "intermediate",
+          "advanced",
+          "pro"
+        ]
+      },
+      {
+        "name": "challengeLevel",
+        "type": "select",
+        "values": [
+          "support",
+          "core",
+          "stretch"
+        ]
+      },
+      {
+        "name": "startDate",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "targetDate",
+        "type": "date"
+      },
+      {
+        "name": "completedAt",
+        "type": "date"
+      },
+      {
+        "name": "externalPlatformIds",
+        "type": "json"
+      },
+      {
+        "name": "tags",
+        "type": "json"
+      },
+      {
+        "name": "artifactIds",
+        "type": "json"
+      },
+      {
+        "name": "reflectionIds",
+        "type": "json"
+      },
+      {
+        "name": "lastWorkedAt",
+        "type": "date"
+      }
+    ],
+    "id": "pbc_3097641201"
+  },
+  {
+    "name": "project_steps",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.projects.id ?= @request.body.project && @collection.projects.family.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "project",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3097641201",
+        "maxSelect": 1
+      },
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "title",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "description",
+        "type": "text"
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "required": true,
+        "values": [
+          "planned",
+          "active",
+          "completed",
+          "blocked"
+        ]
+      },
+      {
+        "name": "orderIndex",
+        "type": "number"
+      },
+      {
+        "name": "linkedBlockId",
+        "type": "text"
+      },
+      {
+        "name": "linkedPlatformId",
+        "type": "text"
+      },
+      {
+        "name": "dueDate",
+        "type": "date"
+      },
+      {
+        "name": "completedAt",
+        "type": "date"
+      },
+      {
+        "name": "evidenceArtifactIds",
+        "type": "json"
+      },
+      {
+        "name": "notes",
+        "type": "text"
+      }
+    ],
+    "id": "pbc_3594180274"
+  },
+  {
+    "name": "reflection_entries",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "project",
+        "type": "relation",
+        "collectionId": "pbc_3097641201",
+        "maxSelect": 1
+      },
+      {
+        "name": "externalSessionId",
+        "type": "text"
+      },
+      {
+        "name": "blockId",
+        "type": "text"
+      },
+      {
+        "name": "blockTitle",
+        "type": "text"
+      },
+      {
+        "name": "date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "prompt",
+        "type": "text"
+      },
+      {
+        "name": "whatLearned",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "challenge",
+        "type": "text"
+      },
+      {
+        "name": "nextStep",
+        "type": "text"
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "min": 1,
+        "max": 5
+      },
+      {
+        "name": "notes",
+        "type": "text"
+      },
+      {
+        "name": "quizAnswers",
+        "type": "json"
+      },
+      {
+        "name": "evidenceArtifactIds",
+        "type": "json"
+      },
+      {
+        "name": "tags",
+        "type": "json"
+      }
+    ],
+    "id": "pbc_1954386207"
+  },
+  {
+    "name": "external_activity_sessions",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "project",
+        "type": "relation",
+        "collectionId": "pbc_3097641201",
+        "maxSelect": 1
+      },
+      {
+        "name": "platformId",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "platformName",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "title",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "description",
+        "type": "text"
+      },
+      {
+        "name": "launchUrl",
+        "type": "url"
+      },
+      {
+        "name": "scheduledDate",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "scheduledStartTime",
+        "type": "text"
+      },
+      {
+        "name": "durationMinutes",
+        "type": "number",
+        "min": 1
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "values": [
+          "scheduled",
+          "in-progress",
+          "completed",
+          "skipped"
+        ]
+      },
+      {
+        "name": "syncMode",
+        "type": "select",
+        "values": [
+          "manual",
+          "linked",
+          "imported"
+        ]
+      },
+      {
+        "name": "importedAccountLabel",
+        "type": "text"
+      },
+      {
+        "name": "notes",
+        "type": "text"
+      },
+      {
+        "name": "reflectionId",
+        "type": "text"
+      },
+      {
+        "name": "evidenceArtifactIds",
+        "type": "json"
+      },
+      {
+        "name": "tags",
+        "type": "json"
+      },
+      {
+        "name": "completedAt",
+        "type": "date"
+      },
+      {
+        "name": "blockId",
+        "type": "text"
+      },
+      {
+        "name": "lastSyncedAt",
+        "type": "date"
+      }
+    ],
+    "id": "pbc_2448601739"
+  },
+  {
+    "name": "achievement_unlocks",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "achievementId",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "unlockedAt",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "sourceType",
+        "type": "select",
+        "values": [
+          "progress",
+          "artifact",
+          "project",
+          "reflection",
+          "external-session",
+          "manual"
+        ]
+      },
+      {
+        "name": "sourceId",
+        "type": "text"
+      },
+      {
+        "name": "pointsAwarded",
+        "type": "number"
+      }
+    ],
+    "id": "pbc_1847265304"
+  },
+  {
+    "name": "planning_rules",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id && @collection.learners.id ?= @request.body.learner && @collection.learners.family ?= @request.body.family",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "learner",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "values": [
+          "draft",
+          "active",
+          "archived"
+        ]
+      },
+      {
+        "name": "primaryPodId",
+        "type": "text"
+      },
+      {
+        "name": "supportPodIds",
+        "type": "json"
+      },
+      {
+        "name": "preferredPlatformIds",
+        "type": "json"
+      },
+      {
+        "name": "weeklyProjectSessions",
+        "type": "number",
+        "min": 0,
+        "max": 7
+      },
+      {
+        "name": "weeklyExternalSessions",
+        "type": "number",
+        "min": 0,
+        "max": 7
+      },
+      {
+        "name": "includeMovement",
+        "type": "bool"
+      },
+      {
+        "name": "includeFrench",
+        "type": "bool"
+      },
+      {
+        "name": "includeWriting",
+        "type": "bool"
+      },
+      {
+        "name": "challengeLevel",
+        "type": "select",
+        "values": [
+          "support",
+          "balanced",
+          "stretch"
+        ]
+      },
+      {
+        "name": "periodStart",
+        "type": "date",
+        "required": true
+      },
+      {
+        "name": "periodEnd",
+        "type": "date"
+      },
+      {
+        "name": "notes",
+        "type": "text"
+      }
+    ],
+    "id": "pbc_2685174390"
+  },
+  {
+    "name": "ai_conversations",
+    "type": "base",
+    "listRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @collection.families.id ?= @request.body.family && @collection.families.owner ?= @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && family.owner = @request.auth.id",
+    "fields": [
+      {
+        "name": "learner",
+        "type": "relation",
+        "collectionId": "pbc_2063371423",
+        "maxSelect": 1
+      },
+      {
+        "name": "family",
+        "type": "relation",
+        "required": true,
+        "collectionId": "pbc_3641796565",
+        "maxSelect": 1
+      },
+      {
+        "name": "mode",
+        "type": "select",
+        "values": [
+          "helper",
+          "socratic",
+          "encourager",
+          "explainer",
+          "french"
+        ]
+      },
+      {
+        "name": "messages",
+        "type": "json"
+      },
+      {
+        "name": "topic",
+        "type": "text"
+      },
+      {
+        "name": "subject",
+        "type": "text"
+      },
+      {
+        "name": "feedbackPositive",
+        "type": "number"
+      },
+      {
+        "name": "feedbackNegative",
+        "type": "number"
+      }
+    ],
+    "id": "pbc_3976763730"
+  }
+]
