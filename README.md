@@ -19,7 +19,7 @@ A modern, feature-rich homeschool learning management platform built with React 
 - **Frontend**: React 19 + TypeScript + Vite
 - **Styling**: Tailwind CSS 4
 - **State**: React Context + localStorage
-- **Backend**: PocketBase (optional, with localStorage fallback)
+- **Backend**: PocketBase today, Appwrite migration in progress, with localStorage fallback
 - **Animations**: Framer Motion
 - **Icons**: Lucide React
 
@@ -66,6 +66,24 @@ AI runtime settings are stored in browser storage, so an older saved `mock` or `
 
 Appwrite is now the target production backend. The frontend can still run against PocketBase locally while the migration is in progress.
 
+Runtime backend toggle for the frontend:
+
+```env
+VITE_DATA_BACKEND=pocketbase
+VITE_POCKETBASE_URL=http://localhost:8090
+
+# Enable when the Appwrite runtime adapter is ready for the environment
+VITE_APPWRITE_ENDPOINT=
+VITE_APPWRITE_PROJECT_ID=
+VITE_APPWRITE_DATABASE_ID=lumipods
+VITE_APPWRITE_BUCKET_ID=learner-artifacts
+```
+
+Current adapter scope:
+- PocketBase remains the default runtime backend
+- Appwrite document reads/writes are scaffolded for core collections
+- artifact file upload/delete still remains PocketBase-backed until Appwrite storage auth/cutover is wired
+
 Useful commands:
 
 ```bash
@@ -102,7 +120,12 @@ Create a `.env` file for production:
 
 ```env
 # Frontend runtime
+VITE_DATA_BACKEND=pocketbase
 VITE_POCKETBASE_URL=https://your-pocketbase-instance.com
+VITE_APPWRITE_ENDPOINT=
+VITE_APPWRITE_PROJECT_ID=
+VITE_APPWRITE_DATABASE_ID=lumipods
+VITE_APPWRITE_BUCKET_ID=learner-artifacts
 VITE_LLM_PROVIDER=openai
 VITE_SPEECH_PROVIDER=openai
 VITE_OPENAI_PROXY_URL=/api/openai

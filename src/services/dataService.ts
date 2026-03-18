@@ -2,6 +2,7 @@
 // Automatically syncs when online, works offline seamlessly
 
 import { pb, COLLECTIONS } from '../lib/pocketbase';
+import { appwriteFileViewUrl } from '../lib/appwrite';
 import { storage } from '../lib/storage';
 import { queueSync } from '../hooks/useDatabase';
 import type { Family } from '../types/family';
@@ -9,6 +10,7 @@ import type { Learner } from '../types/learner';
 import type { Artifact } from '../types/artifact';
 import type { DailyProgress } from '../types/progress';
 import type { RewardRedemption } from '../types/points';
+import { documentBackendClient } from './documentBackendClient';
 
 // Storage keys for offline data
 const OFFLINE_KEYS = {
@@ -25,12 +27,7 @@ const OFFLINE_KEYS = {
 
 // Check if PocketBase is available
 const checkOnline = async (): Promise<boolean> => {
-  try {
-    await pb.health.check();
-    return true;
-  } catch {
-    return false;
-  }
+  return documentBackendClient.isOnline();
 };
 
 const isPocketBaseRecordId = (id: string): boolean => /^[a-z0-9]{15}$/.test(id);
@@ -48,7 +45,7 @@ export const familyDataService = {
     
     if (isOnline) {
       try {
-        const record = await pb.collection(COLLECTIONS.FAMILIES).getOne(familyId);
+        const record = await documentBackendClient.getOne(COLLECTIONS.FAMILIES, familyId);
         const family = mapRecordToFamily(record);
         storage.set(OFFLINE_KEYS.FAMILY, family);
         return family;
@@ -70,13 +67,17 @@ export const familyDataService = {
     if (isOnline) {
       try {
         if (shouldUpdateRemote) {
-          const record = await pb.collection(COLLECTIONS.FAMILIES).update(family.id, omitRecordId(data));
+          const record = await documentBackendClient.update(
+            COLLECTIONS.FAMILIES,
+            family.id,
+            omitRecordId(data)
+          );
           const savedFamily = { ...mapRecordToFamily(record), learners: family.learners };
           storage.set(OFFLINE_KEYS.FAMILY, savedFamily);
           return savedFamily;
         }
 
-        const record = await pb.collection(COLLECTIONS.FAMILIES).create(omitRecordId(data));
+        const record = await documentBackendClient.create(COLLECTIONS.FAMILIES, omitRecordId(data));
         const savedFamily = { ...mapRecordToFamily(record), learners: family.learners };
         storage.set(OFFLINE_KEYS.FAMILY, savedFamily);
         return savedFamily;
@@ -125,7 +126,7 @@ export const familyDataService = {
     const createPayload = omitRecordId(mapFamilyToRecord(family));
     if (isOnline) {
       try {
-        const record = await pb.collection(COLLECTIONS.FAMILIES).create(createPayload);
+        const record = await documentBackendClient.create(COLLECTIONS.FAMILIES, createPayload);
         const savedFamily = { ...mapRecordToFamily(record), learners: family.learners };
         storage.set(OFFLINE_KEYS.FAMILY, savedFamily);
         return savedFamily;
@@ -147,13 +148,13 @@ export const learnerDataService = {
     
     if (isOnline) {
       try {
-        const records = await pb.collection(COLLECTIONS.LEARNERS).getFullList({
-          filter: `family = "${familyId}"`,
-          sort: 'name',
-        });
+        const records = await documentBackendClient.list(COLLECTIONS.LEARNERS);
         const learners = records.map(mapRecordToLearner);
-        storage.set(OFFLINE_KEYS.LEARNERS, learners);
-        return learners;
+        const filteredLearners = learners
+          .filter((learner) => (records.find((record) => String(record.id) === learner.id)?.family as string) === familyId)
+          .sort((left, right) => left.name.localeCompare(right.name));
+        storage.set(OFFLINE_KEYS.LEARNERS, filteredLearners);
+        return filteredLearners;
       } catch {
         // Fall through to offline
       }
@@ -183,10 +184,14 @@ export const learnerDataService = {
     if (isOnline) {
       try {
         if (shouldUpdateRemote) {
-          const record = await pb.collection(COLLECTIONS.LEARNERS).update(localLearnerId, omitRecordId(data));
+          const record = await documentBackendClient.update(
+            COLLECTIONS.LEARNERS,
+            localLearnerId,
+            omitRecordId(data)
+          );
           savedLearner = mapRecordToLearner(record);
         } else {
-          const record = await pb.collection(COLLECTIONS.LEARNERS).create(omitRecordId(data));
+          const record = await documentBackendClient.create(COLLECTIONS.LEARNERS, omitRecordId(data));
           savedLearner = mapRecordToLearner(record);
         }
       } catch {
@@ -223,7 +228,7 @@ export const learnerDataService = {
     const isOnline = await checkOnline();
     if (isOnline) {
       try {
-        await pb.collection(COLLECTIONS.LEARNERS).delete(learnerId);
+        await documentBackendClient.delete(COLLECTIONS.LEARNERS, learnerId);
       } catch {
         queueSync(COLLECTIONS.LEARNERS, 'delete', { id: learnerId });
       }
@@ -244,7 +249,9 @@ export const learnerDataService = {
     const isOnline = await checkOnline();
     if (isOnline) {
       try {
-        await pb.collection(COLLECTIONS.LEARNERS).update(learnerId, { points: learner.points });
+        await documentBackendClient.update(COLLECTIONS.LEARNERS, learnerId, {
+          points: learner.points,
+        });
       } catch {
         queueSync(COLLECTIONS.LEARNERS, 'update', { id: learnerId, points: learner.points });
       }
@@ -266,11 +273,21 @@ export const progressDataService = {
     
     if (isOnline) {
       try {
-        const records = await pb.collection(COLLECTIONS.PROGRESS).getFullList({
-          filter: `family = "${familyId}" && learner = "${learnerId}" && date >= "${startDate.toISOString().split('T')[0]}"`,
-          sort: '-date',
-        });
-        const progress = records.map(mapRecordToProgress);
+        const records = await documentBackendClient.list(COLLECTIONS.PROGRESS);
+        const progress = records
+          .filter((record) => {
+            const recordFamily = String(record.family || '');
+            const recordLearner = String(record.learner || record.learnerId || '');
+            const recordDate = new Date(String(record.date || '')).getTime();
+            return (
+              recordFamily === familyId &&
+              recordLearner === learnerId &&
+              Number.isFinite(recordDate) &&
+              recordDate >= startDate.getTime()
+            );
+          })
+          .map(mapRecordToProgress)
+          .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime());
         storage.set(`${OFFLINE_KEYS.PROGRESS}-${learnerId}`, progress);
         return progress;
       } catch {
@@ -307,15 +324,19 @@ export const progressDataService = {
     
     if (isOnline) {
       try {
-        const existing = await pb.collection(COLLECTIONS.PROGRESS).getList(1, 1, {
-          filter: `family = "${familyId}" && learner = "${learnerId}" && date = "${data.date}"`,
-        });
-        existingRecordId = existing.items[0]?.id as string | undefined;
+        const existing = await documentBackendClient.list(COLLECTIONS.PROGRESS);
+        const existingRecord = existing.find(
+          (record) =>
+            String(record.family || '') === familyId &&
+            String(record.learner || record.learnerId || '') === learnerId &&
+            String(record.date || '') === data.date
+        );
+        existingRecordId = existingRecord?.id as string | undefined;
 
         if (existingRecordId) {
-          await pb.collection(COLLECTIONS.PROGRESS).update(existingRecordId, recordData);
+          await documentBackendClient.update(COLLECTIONS.PROGRESS, existingRecordId, recordData);
         } else {
-          await pb.collection(COLLECTIONS.PROGRESS).create(recordData);
+          await documentBackendClient.create(COLLECTIONS.PROGRESS, recordData);
         }
       } catch {
         queueSync(
@@ -377,11 +398,11 @@ export const artifactDataService = {
     
     if (isOnline) {
       try {
-        const records = await pb.collection(COLLECTIONS.ARTIFACTS).getFullList({
-          filter: `learner = "${learnerId}"`,
-          sort: '-created',
-        });
-        const artifacts = records.map(mapRecordToArtifact);
+        const records = await documentBackendClient.list(COLLECTIONS.ARTIFACTS);
+        const artifacts = records
+          .filter((record) => String(record.learner || '') === learnerId)
+          .map(mapRecordToArtifact)
+          .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
         storage.set(`${OFFLINE_KEYS.ARTIFACTS}-${learnerId}`, artifacts);
         return artifacts;
       } catch {
@@ -411,19 +432,30 @@ export const artifactDataService = {
     
     if (isOnline) {
       try {
-        if (shouldUpdateRemote) {
-          const record = await pb.collection(COLLECTIONS.ARTIFACTS).update(
+        if (options?.file) {
+          if (shouldUpdateRemote) {
+            const record = await pb.collection(COLLECTIONS.ARTIFACTS).update(
+              localArtifactId,
+              mapArtifactToFormData(artifact, options.file)
+            );
+            savedArtifact = mapRecordToArtifact(record);
+          } else {
+            const record = await pb.collection(COLLECTIONS.ARTIFACTS).create(
+              mapArtifactToFormData(artifact, options.file)
+            );
+            savedArtifact = mapRecordToArtifact(record);
+          }
+        } else if (shouldUpdateRemote) {
+          const record = await documentBackendClient.update(
+            COLLECTIONS.ARTIFACTS,
             localArtifactId,
-            options?.file
-              ? mapArtifactToFormData(artifact, options.file)
-              : omitRecordId(data)
+            omitRecordId(data)
           );
           savedArtifact = mapRecordToArtifact(record);
         } else {
-          const record = await pb.collection(COLLECTIONS.ARTIFACTS).create(
-            options?.file
-              ? mapArtifactToFormData(artifact, options.file)
-              : omitRecordId(data)
+          const record = await documentBackendClient.create(
+            COLLECTIONS.ARTIFACTS,
+            omitRecordId(data)
           );
           savedArtifact = mapRecordToArtifact(record);
         }
@@ -483,11 +515,11 @@ export const rewardRedemptionDataService = {
 
     if (isOnline) {
       try {
-        const records = await pb.collection(COLLECTIONS.REWARD_REDEMPTIONS).getFullList({
-          filter: `learner = "${learnerId}"`,
-          sort: '-created',
-        });
-        const redemptions = records.map(mapRecordToRewardRedemption);
+        const records = await documentBackendClient.list(COLLECTIONS.REWARD_REDEMPTIONS);
+        const redemptions = records
+          .filter((record) => String(record.learner || record.learnerId || '') === learnerId)
+          .map(mapRecordToRewardRedemption)
+          .sort((left, right) => new Date(right.redeemedAt).getTime() - new Date(left.redeemedAt).getTime());
         storage.set(`${OFFLINE_KEYS.REWARD_REDEMPTIONS}-${learnerId}`, redemptions);
         return redemptions;
       } catch {
@@ -517,7 +549,10 @@ export const rewardRedemptionDataService = {
 
     if (isOnline) {
       try {
-        const record = await pb.collection(COLLECTIONS.REWARD_REDEMPTIONS).create(omitRecordId(data));
+        const record = await documentBackendClient.create(
+          COLLECTIONS.REWARD_REDEMPTIONS,
+          omitRecordId(data)
+        );
         const savedRedemption = mapRecordToRewardRedemption(record);
         storage.set(
           `${OFFLINE_KEYS.REWARD_REDEMPTIONS}-${redemption.learnerId}`,
@@ -616,8 +651,9 @@ function mapRecordToProgress(record: Record<string, unknown>): DailyProgress {
 }
 
 function mapRecordToArtifact(record: Record<string, unknown>): Artifact {
+  const fileId = (record.file as string | undefined) || (record.fileId as string | undefined);
   const externalUrl = record.externalUrl as string | undefined;
-  const fileName = record.file as string | undefined;
+  const fileName = (record.fileName as string | undefined) || fileId;
 
   return {
     id: record.id as string,
@@ -630,8 +666,16 @@ function mapRecordToArtifact(record: Record<string, unknown>): Artifact {
     description: (record.description as string) || undefined,
     reflection: (record.reflection as string) || undefined,
     type: record.type as Artifact['type'],
-    url: externalUrl || (fileName ? pb.files.getURL(record, fileName) : undefined),
+    url:
+      externalUrl ||
+      (fileId
+        ? documentBackendClient.kind === 'appwrite'
+          ? appwriteFileViewUrl(fileId)
+          : pb.files.getURL(record, fileName || fileId)
+        : undefined),
     thumbnailUrl: (record.thumbnailUrl as string) || undefined,
+    fileSize: (record.fileSize as number) || undefined,
+    mimeType: (record.fileMimeType as string) || undefined,
     competencies: (record.competencies as Artifact['competencies']) || [],
     tags: (record.tags as string[]) || [],
     skillLevel: (record.skillLevel as Artifact['skillLevel']) || 'foundation',
