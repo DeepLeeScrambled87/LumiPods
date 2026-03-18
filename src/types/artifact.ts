@@ -23,6 +23,8 @@ export interface Artifact {
   reflection?: string; // Student's own reflection on the work
   
   // Media
+  fileId?: string;
+  fileName?: string;
   url?: string;
   thumbnailUrl?: string;
   fileSize?: number;

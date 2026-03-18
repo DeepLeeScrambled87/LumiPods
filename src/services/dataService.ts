@@ -11,6 +11,10 @@ import type { Artifact } from '../types/artifact';
 import type { DailyProgress } from '../types/progress';
 import type { RewardRedemption } from '../types/points';
 import { documentBackendClient } from './documentBackendClient';
+import {
+  deleteArtifactFileFromAppwrite,
+  uploadArtifactFileToAppwrite,
+} from './appwriteStorageService';
 
 // Storage keys for offline data
 const OFFLINE_KEYS = {
@@ -37,6 +41,9 @@ const omitRecordId = (data: Record<string, unknown>): Record<string, unknown> =>
 
 const omitUndefined = (data: Record<string, unknown>): Record<string, unknown> =>
   Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+
+const isAppwriteMissingRecordError = (error: unknown): boolean =>
+  error instanceof Error && /Appwrite request failed \(404\)/.test(error.message);
 
 // ============ Family Service ============
 export const familyDataService = {
@@ -425,14 +432,49 @@ export const artifactDataService = {
     storage.set(`${OFFLINE_KEYS.ARTIFACTS}-${artifact.learnerId}`, cached);
     
     const isOnline = await checkOnline();
-    const data = mapArtifactToRecord(artifact);
     const shouldUpdateRemote = isPocketBaseRecordId(localArtifactId);
     const canQueueSync = !options?.file;
     let savedArtifact = artifact;
     
     if (isOnline) {
       try {
-        if (options?.file) {
+        if (options?.file && documentBackendClient.kind === 'appwrite') {
+          if (artifact.fileId) {
+            try {
+              await deleteArtifactFileFromAppwrite(artifact.fileId);
+            } catch (error) {
+              console.warn('Failed to remove previous Appwrite artifact file before re-upload:', error);
+            }
+          }
+
+          const upload = await uploadArtifactFileToAppwrite(options.file, artifact.fileId || localArtifactId);
+          const artifactWithFile: Artifact = {
+            ...artifact,
+            fileId: upload.fileId,
+            fileName: upload.fileName,
+            url: upload.url,
+            fileSize: upload.fileSize,
+            mimeType: upload.mimeType,
+            updatedAt: new Date().toISOString(),
+          };
+          const recordData = mapArtifactToRecord(artifactWithFile);
+
+          try {
+            const record = await documentBackendClient.update(
+              COLLECTIONS.ARTIFACTS,
+              localArtifactId,
+              omitRecordId(recordData)
+            );
+            savedArtifact = mapRecordToArtifact(record);
+          } catch (error) {
+            if (!isAppwriteMissingRecordError(error)) {
+              throw error;
+            }
+
+            const record = await documentBackendClient.create(COLLECTIONS.ARTIFACTS, recordData);
+            savedArtifact = mapRecordToArtifact(record);
+          }
+        } else if (options?.file) {
           if (shouldUpdateRemote) {
             const record = await pb.collection(COLLECTIONS.ARTIFACTS).update(
               localArtifactId,
@@ -445,7 +487,28 @@ export const artifactDataService = {
             );
             savedArtifact = mapRecordToArtifact(record);
           }
+        } else if (documentBackendClient.kind === 'appwrite') {
+          const recordData = mapArtifactToRecord(artifact);
+          try {
+            const record = await documentBackendClient.update(
+              COLLECTIONS.ARTIFACTS,
+              localArtifactId,
+              omitRecordId(recordData)
+            );
+            savedArtifact = mapRecordToArtifact(record);
+          } catch (error) {
+            if (!isAppwriteMissingRecordError(error)) {
+              throw error;
+            }
+
+            const record = await documentBackendClient.create(
+              COLLECTIONS.ARTIFACTS,
+              recordData
+            );
+            savedArtifact = mapRecordToArtifact(record);
+          }
         } else if (shouldUpdateRemote) {
+          const data = mapArtifactToRecord(artifact);
           const record = await documentBackendClient.update(
             COLLECTIONS.ARTIFACTS,
             localArtifactId,
@@ -453,6 +516,7 @@ export const artifactDataService = {
           );
           savedArtifact = mapRecordToArtifact(record);
         } else {
+          const data = mapArtifactToRecord(artifact);
           const record = await documentBackendClient.create(
             COLLECTIONS.ARTIFACTS,
             omitRecordId(data)
@@ -460,6 +524,7 @@ export const artifactDataService = {
           savedArtifact = mapRecordToArtifact(record);
         }
       } catch {
+        const data = mapArtifactToRecord(artifact);
         if (canQueueSync) {
           queueSync(
             COLLECTIONS.ARTIFACTS,
@@ -470,6 +535,7 @@ export const artifactDataService = {
         return artifact;
       }
     } else if (canQueueSync) {
+      const data = mapArtifactToRecord(artifact);
       queueSync(
         COLLECTIONS.ARTIFACTS,
         shouldUpdateRemote ? 'update' : 'create',
@@ -491,19 +557,26 @@ export const artifactDataService = {
     const cached = storage.get<Artifact[]>(`${OFFLINE_KEYS.ARTIFACTS}-${artifact.learnerId}`, []);
     storage.set(`${OFFLINE_KEYS.ARTIFACTS}-${artifact.learnerId}`, cached.filter(a => a.id !== artifact.id));
     
-    if (!isPocketBaseRecordId(artifact.id)) {
-      return;
-    }
-
     const isOnline = await checkOnline();
     if (isOnline) {
       try {
-        await pb.collection(COLLECTIONS.ARTIFACTS).delete(artifact.id);
+        if (documentBackendClient.kind === 'appwrite') {
+          if (artifact.fileId) {
+            await deleteArtifactFileFromAppwrite(artifact.fileId);
+          }
+          await documentBackendClient.delete(COLLECTIONS.ARTIFACTS, artifact.id);
+        } else if (isPocketBaseRecordId(artifact.id)) {
+          await pb.collection(COLLECTIONS.ARTIFACTS).delete(artifact.id);
+        }
       } catch {
-        queueSync(COLLECTIONS.ARTIFACTS, 'delete', { id: artifact.id });
+        if (documentBackendClient.kind !== 'appwrite' || isPocketBaseRecordId(artifact.id)) {
+          queueSync(COLLECTIONS.ARTIFACTS, 'delete', { id: artifact.id });
+        }
       }
     } else {
-      queueSync(COLLECTIONS.ARTIFACTS, 'delete', { id: artifact.id });
+      if (documentBackendClient.kind !== 'appwrite' || isPocketBaseRecordId(artifact.id)) {
+        queueSync(COLLECTIONS.ARTIFACTS, 'delete', { id: artifact.id });
+      }
     }
   },
 };
@@ -666,6 +739,8 @@ function mapRecordToArtifact(record: Record<string, unknown>): Artifact {
     description: (record.description as string) || undefined,
     reflection: (record.reflection as string) || undefined,
     type: record.type as Artifact['type'],
+    fileId: fileId || undefined,
+    fileName: fileName || undefined,
     url:
       externalUrl ||
       (fileId
@@ -687,6 +762,11 @@ function mapRecordToArtifact(record: Record<string, unknown>): Artifact {
 }
 
 function mapArtifactToRecord(artifact: Artifact): Record<string, unknown> {
+  const managedFileUrl =
+    artifact.fileId && artifact.url === appwriteFileViewUrl(artifact.fileId)
+      ? undefined
+      : artifact.url;
+
   return omitUndefined({
     id: artifact.id,
     family: artifact.familyId,
@@ -698,7 +778,11 @@ function mapArtifactToRecord(artifact: Artifact): Record<string, unknown> {
     description: artifact.description,
     reflection: artifact.reflection,
     type: artifact.type,
-    externalUrl: artifact.url,
+    fileId: artifact.fileId,
+    fileName: artifact.fileName,
+    fileMimeType: artifact.mimeType,
+    fileSize: artifact.fileSize,
+    externalUrl: managedFileUrl,
     thumbnailUrl: artifact.thumbnailUrl,
     competencies: artifact.competencies,
     tags: artifact.tags,

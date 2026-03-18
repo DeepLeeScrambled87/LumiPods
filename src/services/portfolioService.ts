@@ -11,8 +11,10 @@ import {
   isPodLibraryArtifact,
 } from '../lib/artifactScope';
 import { artifactDataService } from './dataService';
+import { documentBackendClient } from './documentBackendClient';
 import { syncLearnerPointsBalance } from './pointsBalanceService';
 import { announceLearnerPointsAward } from './pointsFeedbackService';
+import { uploadArtifactFileToAppwrite } from './appwriteStorageService';
 import type { Artifact } from '../types/artifact';
 import type { LearnerCompetency } from '../types/competency';
 import type { SkillLevel } from '../types/skillLevel';
@@ -63,31 +65,13 @@ const hasKeywordOverlap = (left: Set<string>, right: Set<string>): boolean => {
   return false;
 };
 
-// Check if PocketBase is available
 const checkOnline = async (): Promise<boolean> => {
-  try {
-    await pb.health.check();
-    return true;
-  } catch {
-    return false;
-  }
+  return documentBackendClient.isOnline();
 };
 
 type CreateArtifactInput = Omit<Artifact, 'id' | 'createdAt' | 'updatedAt'> & {
   file?: File;
 };
-
-interface PBCompetencyRecord {
-  id: string;
-  learner: string;
-  domain: LearnerCompetency['domain'];
-  level: LearnerCompetency['level'];
-  evidenceIds?: string[];
-  assessedBy: LearnerCompetency['assessedBy'];
-  notes?: string;
-  created: string;
-  updated: string;
-}
 
 export const portfolioService = {
   async getArtifacts(learnerId: string): Promise<Artifact[]> {
@@ -261,10 +245,13 @@ export const competencyService = {
 
     if (isOnline) {
       try {
-        const records = await pb.collection(COLLECTIONS.COMPETENCIES).getFullList<PBCompetencyRecord>({
-          filter: `learner = "${learnerId}"`,
-          sort: '-updated',
-        });
+        const records = (await documentBackendClient.list(COLLECTIONS.COMPETENCIES))
+          .filter((record) => String(record.learner || record.learnerId || '') === learnerId)
+          .sort(
+            (left, right) =>
+              new Date(String(right.updated || right.$updatedAt || '')).getTime() -
+              new Date(String(left.updated || left.$updatedAt || '')).getTime()
+          );
         const competencies = records.map(mapRecordToCompetency);
         storage.set(`${COMPETENCIES_KEY}-${learnerId}`, competencies);
         return competencies;
@@ -300,12 +287,7 @@ export const competencyService = {
 
     try {
       const recordData = mapCompetencyToRecord(updatedCompetency);
-      const record = isPocketBaseRecordId(localCompetencyId)
-        ? await pb.collection(COLLECTIONS.COMPETENCIES).update<PBCompetencyRecord>(
-            localCompetencyId,
-            recordData
-          )
-        : await pb.collection(COLLECTIONS.COMPETENCIES).create<PBCompetencyRecord>(recordData);
+      const record = await upsertCompetencyRecord(localCompetencyId, recordData);
 
       const savedCompetency = mapRecordToCompetency(record);
       storage.set(
@@ -337,6 +319,11 @@ export const uploadArtifactFile = async (file: File, learnerId: string): Promise
 
   if (isOnline) {
     try {
+      if (documentBackendClient.kind === 'appwrite') {
+        const upload = await uploadArtifactFileToAppwrite(file, createUploadFileId(learnerId));
+        return upload.url;
+      }
+
       const formData = new FormData();
       formData.append('file', file);
       formData.append('learnerId', learnerId);
@@ -351,16 +338,16 @@ export const uploadArtifactFile = async (file: File, learnerId: string): Promise
   return URL.createObjectURL(file);
 };
 
-function mapRecordToCompetency(record: PBCompetencyRecord): LearnerCompetency {
+function mapRecordToCompetency(record: Record<string, unknown>): LearnerCompetency {
   return {
-    id: record.id,
-    learnerId: record.learner,
-    domain: record.domain,
-    level: record.level,
-    evidenceIds: record.evidenceIds || [],
-    assessedAt: record.updated || record.created,
-    assessedBy: record.assessedBy,
-    notes: record.notes || undefined,
+    id: String(record.id || ''),
+    learnerId: String(record.learner || record.learnerId || ''),
+    domain: record.domain as LearnerCompetency['domain'],
+    level: record.level as LearnerCompetency['level'],
+    evidenceIds: ((record.evidenceIds as string[] | undefined) || []),
+    assessedAt: String(record.updated || record.created || ''),
+    assessedBy: record.assessedBy as LearnerCompetency['assessedBy'],
+    notes: (record.notes as string) || undefined,
   };
 }
 
@@ -373,4 +360,46 @@ function mapCompetencyToRecord(competency: LearnerCompetency): Record<string, un
     assessedBy: competency.assessedBy,
     notes: competency.notes,
   };
+}
+
+function createUploadFileId(learnerId: string): string {
+  return `upl${learnerId.slice(0, 6)}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function isAppwriteMissingRecordError(error: unknown): boolean {
+  return error instanceof Error && /Appwrite request failed \(404\)/.test(error.message);
+}
+
+async function upsertCompetencyRecord(
+  competencyId: string,
+  recordData: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  if (documentBackendClient.kind === 'appwrite') {
+    try {
+      return await documentBackendClient.update(
+        COLLECTIONS.COMPETENCIES,
+        competencyId,
+        recordData
+      );
+    } catch (error) {
+      if (!isAppwriteMissingRecordError(error)) {
+        throw error;
+      }
+
+      return await documentBackendClient.create(COLLECTIONS.COMPETENCIES, {
+        id: competencyId,
+        ...recordData,
+      });
+    }
+  }
+
+  if (isPocketBaseRecordId(competencyId)) {
+    return await documentBackendClient.update(
+      COLLECTIONS.COMPETENCIES,
+      competencyId,
+      recordData
+    );
+  }
+
+  return await documentBackendClient.create(COLLECTIONS.COMPETENCIES, recordData);
 }

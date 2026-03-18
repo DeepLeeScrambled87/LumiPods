@@ -1,9 +1,11 @@
 // PocketBase client configuration
 import PocketBase from 'pocketbase';
 
-const POCKETBASE_URL = import.meta.env.VITE_POCKETBASE_URL || 'http://localhost:8090';
+const POCKETBASE_URL = (import.meta.env.VITE_POCKETBASE_URL || '').trim();
 
-export const pb = new PocketBase(POCKETBASE_URL);
+export const isPocketBaseConfigured = (): boolean => Boolean(POCKETBASE_URL);
+
+export const pb = new PocketBase(POCKETBASE_URL || 'http://127.0.0.1:8090');
 
 // Disable auto-cancellation for better UX
 pb.autoCancellation(false);

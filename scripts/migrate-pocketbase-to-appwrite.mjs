@@ -15,6 +15,7 @@ const APPWRITE_BUCKET_ID = process.env.APPWRITE_BUCKET_ID || 'learner-artifacts'
 const POCKETBASE_CONTAINER = process.env.POCKETBASE_CONTAINER || 'lumipods-pocketbase';
 const POCKETBASE_DATA_DB_PATH = process.env.POCKETBASE_DATA_DB_PATH || '/pb_data/data.db';
 const POCKETBASE_STORAGE_ROOT = process.env.POCKETBASE_STORAGE_ROOT || '/pb_data/storage';
+const APPWRITE_UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024;
 
 const CURRENT_COLLECTIONS = [
   'families',
@@ -203,35 +204,72 @@ async function ensureDocument(collectionId, documentId, data) {
 
 async function uploadFile({ fileId, uploadName, mimeType, localPath }) {
   const buffer = await readFile(localPath);
-  const form = new FormData();
-  form.set('fileId', fileId);
-  form.set('file', new Blob([buffer], { type: mimeType || 'application/octet-stream' }), uploadName);
+  const storagePath = `/storage/buckets/${APPWRITE_BUCKET_ID}/files`;
 
-  const createResponse = await appwriteRequest(
-    'POST',
-    `/storage/buckets/${APPWRITE_BUCKET_ID}/files`,
-    form,
-  );
+  const uploadChunk = async (chunkStart, chunkEnd, isFirstChunk) => {
+    const form = new FormData();
+    form.set('fileId', fileId);
+    form.set(
+      'file',
+      new Blob([buffer.subarray(chunkStart, chunkEnd)], {
+        type: mimeType || 'application/octet-stream',
+      }),
+      uploadName,
+    );
 
-  if (createResponse.ok) {
-    if (!createResponse.json) {
+    return appwriteRequest('POST', storagePath, form, {
+      ...(buffer.length > APPWRITE_UPLOAD_CHUNK_SIZE
+        ? {
+            'Content-Range': `bytes ${chunkStart}-${chunkEnd - 1}/${buffer.length}`,
+            ...(isFirstChunk ? {} : { 'X-Appwrite-ID': fileId }),
+          }
+        : {}),
+    });
+  };
+
+  let response;
+
+  if (buffer.length > APPWRITE_UPLOAD_CHUNK_SIZE) {
+    let offset = 0;
+    do {
+      const nextOffset = Math.min(offset + APPWRITE_UPLOAD_CHUNK_SIZE, buffer.length);
+      response = await uploadChunk(offset, nextOffset, offset === 0);
+
+      if (!response.ok && !(offset === 0 && response.status === 409)) {
+        throw new Error(
+          `Failed to upload file ${fileId} chunk ${offset}-${nextOffset} (${response.status}): ${response.text.slice(0, 300)}`,
+        );
+      }
+
+      if (response.status === 409) {
+        break;
+      }
+
+      offset = nextOffset;
+    } while (offset < buffer.length);
+  } else {
+    response = await uploadChunk(0, buffer.length, true);
+    if (!response.ok && response.status !== 409) {
       throw new Error(
-        `Upload returned non-JSON success payload (${createResponse.status}): ${createResponse.text.slice(0, 300)}`,
+        `Failed to upload file ${fileId} (${response.status}): ${response.text.slice(0, 300)}`,
       );
     }
-    return { action: 'created', file: createResponse.json };
   }
 
-  if (createResponse.status !== 409) {
-    throw new Error(
-      `Failed to upload file ${fileId} (${createResponse.status}): ${createResponse.text.slice(0, 300)}`,
-    );
+  if (response?.ok) {
+    if (!response.json) {
+      throw new Error(
+        `Upload returned non-JSON success payload (${response.status}): ${response.text.slice(0, 300)}`,
+      );
+    }
+    return { action: 'created', file: response.json };
   }
 
-  const existingResponse = await appwriteRequest(
-    'GET',
-    `/storage/buckets/${APPWRITE_BUCKET_ID}/files/${fileId}`,
-  );
+  if (response?.status !== 409) {
+    throw new Error(`Upload finished without a valid Appwrite response for ${fileId}.`);
+  }
+
+  const existingResponse = await appwriteRequest('GET', `/storage/buckets/${APPWRITE_BUCKET_ID}/files/${fileId}`);
 
   if (!existingResponse.ok) {
     throw new Error(

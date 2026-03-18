@@ -5,7 +5,7 @@ import {
   appwriteHeaders,
   isAppwriteConfigured,
 } from '../lib/appwrite';
-import { pb } from '../lib/pocketbase';
+import { isPocketBaseConfigured, pb } from '../lib/pocketbase';
 
 export type DataBackendKind = 'pocketbase' | 'appwrite';
 
@@ -487,6 +487,10 @@ const listAllAppwriteDocuments = async (collection: string): Promise<RawRecord[]
 const pocketBaseClient: DocumentBackendClient = {
   kind: 'pocketbase',
   async isOnline() {
+    if (!isPocketBaseConfigured()) {
+      return false;
+    }
+
     try {
       await pb.health.check();
       return true;
@@ -558,7 +562,8 @@ const appwriteClient: DocumentBackendClient = {
   },
 };
 
-const DATA_BACKEND = ((import.meta.env.VITE_DATA_BACKEND as DataBackendKind | undefined) || 'pocketbase') as DataBackendKind;
+const DATA_BACKEND = ((import.meta.env.VITE_DATA_BACKEND as DataBackendKind | undefined) ||
+  (isAppwriteConfigured() ? 'appwrite' : 'pocketbase')) as DataBackendKind;
 
 export const documentBackendClient: DocumentBackendClient =
   DATA_BACKEND === 'appwrite' ? appwriteClient : pocketBaseClient;

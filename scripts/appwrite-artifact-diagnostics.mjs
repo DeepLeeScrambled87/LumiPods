@@ -76,40 +76,25 @@ async function appwriteJson(pathname) {
   return json;
 }
 
-async function listAllDocuments(collectionId) {
-  let offset = 0;
-  const limit = 100;
-  const documents = [];
+async function appwriteExists(pathname) {
+  const response = await fetch(`${APPWRITE_ENDPOINT}${pathname}`, {
+    headers: {
+      'X-Appwrite-Project': APPWRITE_PROJECT_ID,
+      'X-Appwrite-Key': APPWRITE_API_KEY,
+      'Content-Type': 'application/json',
+    },
+  });
 
-  while (true) {
-    const response = await appwriteJson(
-      `/databases/${APPWRITE_DATABASE_ID}/collections/${collectionId}/documents?limit=${limit}&offset=${offset}`,
-    );
-    const items = response.documents || [];
-    documents.push(...items);
-    if (items.length < limit) break;
-    offset += limit;
+  if (response.ok) {
+    return true;
   }
 
-  return documents;
-}
-
-async function listAllFiles(bucketId) {
-  let offset = 0;
-  const limit = 100;
-  const files = [];
-
-  while (true) {
-    const response = await appwriteJson(
-      `/storage/buckets/${bucketId}/files?limit=${limit}&offset=${offset}`,
-    );
-    const items = response.files || [];
-    files.push(...items);
-    if (items.length < limit) break;
-    offset += limit;
+  if (response.status === 404) {
+    return false;
   }
 
-  return files;
+  const text = await response.text();
+  throw new Error(`Appwrite request failed (${response.status}) ${pathname}: ${text}`);
 }
 
 async function main() {
@@ -133,21 +118,21 @@ async function main() {
     'select id, learner, family, type, title, file, podId, weekNumber from artifacts order by id;',
   );
 
-  const appwriteArtifacts = await listAllDocuments('artifacts');
-  const appwriteFiles = await listAllFiles(APPWRITE_BUCKET_ID);
-  const appwriteArtifactIds = new Set(appwriteArtifacts.map((document) => document.$id));
-  const appwriteFileIds = new Set(appwriteFiles.map((file) => file.$id));
-
-  const diagnostics = pocketBaseArtifacts.map((artifact) => {
+  const diagnostics = [];
+  for (const artifact of pocketBaseArtifacts) {
     const fileExpected = Boolean(artifact.file);
     const containerPath = fileExpected
       ? `${POCKETBASE_STORAGE_ROOT}/${artifactCollectionId}/${artifact.id}/${artifact.file}`
       : '';
     const sourceFileExists = fileExpected ? dockerFileExists(containerPath) : false;
-    const hasDocument = appwriteArtifactIds.has(artifact.id);
-    const hasFile = fileExpected ? appwriteFileIds.has(artifact.id) : true;
+    const hasDocument = await appwriteExists(
+      `/databases/${APPWRITE_DATABASE_ID}/collections/artifacts/documents/${artifact.id}`,
+    );
+    const hasFile = fileExpected
+      ? await appwriteExists(`/storage/buckets/${APPWRITE_BUCKET_ID}/files/${artifact.id}`)
+      : true;
 
-    return {
+    diagnostics.push({
       id: artifact.id,
       title: artifact.title,
       type: artifact.type,
@@ -165,15 +150,15 @@ async function main() {
             : !hasFile
               ? 'missing-file'
               : 'complete',
-    };
-  });
+    });
+  }
 
   const report = {
     generatedAt: new Date().toISOString(),
     summary: {
       pocketBaseArtifacts: pocketBaseArtifacts.length,
-      appwriteArtifactDocuments: appwriteArtifacts.length,
-      appwriteBucketFiles: appwriteFiles.length,
+      appwriteArtifactDocuments: diagnostics.filter((item) => item.hasDocument).length,
+      appwriteBucketFiles: diagnostics.filter((item) => item.hasFile).length,
       complete: diagnostics.filter((item) => item.status === 'complete').length,
       missingDocumentAndFile: diagnostics.filter((item) => item.status === 'missing-document-and-file').length,
       missingDocument: diagnostics.filter((item) => item.status === 'missing-document').length,
