@@ -108,6 +108,61 @@ const normalizeAppwriteRecord = (collection: string, record: RawRecord): RawReco
         learner: record.learnerId ?? record.learner,
         evidenceIds: parseJsonField(record.evidenceIdsJson ?? record.evidenceIds, []),
       };
+    case 'projects':
+      return {
+        ...base,
+        family: record.familyId ?? record.family,
+        learner: record.learnerId ?? record.learner,
+        externalPlatformIds: parseJsonField(record.externalPlatformIdsJson ?? record.externalPlatformIds, []),
+        tags: parseJsonField(record.tagsJson ?? record.tags, []),
+        artifactIds: parseJsonField(record.artifactIdsJson ?? record.artifactIds, []),
+        reflectionIds: parseJsonField(record.reflectionIdsJson ?? record.reflectionIds, []),
+      };
+    case 'project_steps':
+      return {
+        ...base,
+        family: record.familyId ?? record.family,
+        learner: record.learnerId ?? record.learner,
+        project: record.projectId ?? record.project,
+        evidenceArtifactIds: parseJsonField(record.evidenceArtifactIdsJson ?? record.evidenceArtifactIds, []),
+      };
+    case 'reflection_entries':
+      return {
+        ...base,
+        family: record.familyId ?? record.family,
+        learner: record.learnerId ?? record.learner,
+        project: record.projectId ?? record.project,
+        quizAnswers: parseJsonField(record.quizAnswersJson ?? record.quizAnswers, []),
+        evidenceArtifactIds: parseJsonField(record.evidenceArtifactIdsJson ?? record.evidenceArtifactIds, []),
+        tags: parseJsonField(record.tagsJson ?? record.tags, []),
+      };
+    case 'external_activity_sessions':
+      return {
+        ...base,
+        family: record.familyId ?? record.family,
+        learner: record.learnerId ?? record.learner,
+        project: record.projectId ?? record.project,
+        launchUrl: record.url ?? record.launchUrl,
+        evidenceArtifactIds: parseJsonField(record.evidenceArtifactIdsJson ?? record.evidenceArtifactIds, []),
+        tags: parseJsonField(record.tagsJson ?? record.tags, []),
+      };
+    case 'achievement_unlocks':
+      return {
+        ...base,
+        family: record.familyId ?? record.family,
+        learner: record.learnerId ?? record.learner,
+      };
+    case 'planning_rules':
+      return {
+        ...base,
+        family: record.familyId ?? record.family,
+        learner: record.learnerId ?? record.learner,
+        supportPodIds: parseJsonField(record.supportPodIdsJson ?? record.supportPodIds, []),
+        preferredPlatformIds: parseJsonField(
+          record.preferredPlatformIdsJson ?? record.preferredPlatformIds,
+          []
+        ),
+      };
     default:
       return base;
   }
@@ -264,6 +319,121 @@ const toAppwritePayload = (collection: string, data: Record<string, unknown>): R
         level: data.level,
         evidenceIdsJson: toJsonString(data.evidenceIds, '[]'),
         assessedBy: data.assessedBy,
+        notes: data.notes,
+      };
+    case 'projects':
+      return {
+        legacyPocketBaseId: data.id,
+        familyId: data.family ?? data.familyId,
+        learnerId: data.learner ?? data.learnerId,
+        podId: data.podId,
+        title: data.title,
+        summary: data.summary,
+        goal: data.goal,
+        status: data.status,
+        source: data.source,
+        skillLevel: data.skillLevel,
+        challengeLevel: data.challengeLevel,
+        startDate: data.startDate,
+        targetDate: data.targetDate,
+        completedAt: data.completedAt,
+        externalPlatformIdsJson: toJsonString(data.externalPlatformIds, '[]'),
+        tagsJson: toJsonString(data.tags, '[]'),
+        artifactIdsJson: toJsonString(data.artifactIds, '[]'),
+        reflectionIdsJson: toJsonString(data.reflectionIds, '[]'),
+        lastWorkedAt: data.lastWorkedAt,
+      };
+    case 'project_steps':
+      return {
+        legacyPocketBaseId: data.id,
+        projectId: data.project ?? data.projectId,
+        familyId: data.family ?? data.familyId,
+        learnerId: data.learner ?? data.learnerId,
+        title: data.title,
+        description: data.description,
+        status: data.status,
+        orderIndex: data.orderIndex,
+        linkedBlockId: data.linkedBlockId,
+        linkedPlatformId: data.linkedPlatformId,
+        dueDate: data.dueDate,
+        completedAt: data.completedAt,
+        evidenceArtifactIdsJson: toJsonString(data.evidenceArtifactIds, '[]'),
+        notes: data.notes,
+      };
+    case 'reflection_entries':
+      return {
+        legacyPocketBaseId: data.id,
+        familyId: data.family ?? data.familyId,
+        learnerId: data.learner ?? data.learnerId,
+        projectId: data.project ?? data.projectId,
+        externalSessionId: data.externalSessionId,
+        blockId: data.blockId,
+        blockTitle: data.blockTitle,
+        date: data.date,
+        prompt: data.prompt,
+        whatLearned: data.whatLearned,
+        challenge: data.challenge,
+        nextStep: data.nextStep,
+        confidence: data.confidence,
+        notes: data.notes,
+        quizAnswersJson: toJsonString(data.quizAnswers, '[]'),
+        evidenceArtifactIdsJson: toJsonString(data.evidenceArtifactIds, '[]'),
+        tagsJson: toJsonString(data.tags, '[]'),
+      };
+    case 'external_activity_sessions':
+      return {
+        legacyPocketBaseId: data.id,
+        familyId: data.family ?? data.familyId,
+        learnerId: data.learner ?? data.learnerId,
+        projectId: data.project ?? data.projectId,
+        platformId: data.platformId,
+        platformName: data.platformName,
+        title: data.title,
+        description: data.description,
+        url: data.launchUrl ?? data.url,
+        scheduledDate: data.scheduledDate,
+        scheduledStartTime: data.scheduledStartTime,
+        durationMinutes: data.durationMinutes,
+        status: data.status,
+        syncMode: data.syncMode,
+        importedAccountLabel: data.importedAccountLabel,
+        notes: data.notes,
+        reflectionId: data.reflectionId,
+        evidenceArtifactIdsJson: toJsonString(data.evidenceArtifactIds, '[]'),
+        tagsJson: toJsonString(data.tags, '[]'),
+        completedAt: data.completedAt,
+        blockId: data.blockId,
+        lastSyncedAt: data.lastSyncedAt,
+      };
+    case 'achievement_unlocks':
+      return {
+        legacyPocketBaseId: data.id,
+        familyId: data.family ?? data.familyId,
+        learnerId: data.learner ?? data.learnerId,
+        achievementId: data.achievementId,
+        unlockedAt: data.unlockedAt,
+        sourceType: data.sourceType,
+        sourceId: data.sourceId,
+        pointsAwarded: data.pointsAwarded,
+      };
+    case 'planning_rules':
+      return {
+        legacyPocketBaseId: data.id,
+        familyId: data.family ?? data.familyId,
+        learnerId: data.learner ?? data.learnerId,
+        name: data.name,
+        status: data.status,
+        primaryPodId: data.primaryPodId,
+        supportPodIdsJson: toJsonString(data.supportPodIds, '[]'),
+        preferredPlatformIdsJson: toJsonString(data.preferredPlatformIds, '[]'),
+        weeklyProjectSessions: data.weeklyProjectSessions,
+        weeklyExternalSessions: data.weeklyExternalSessions,
+        includeMovement: data.includeMovement,
+        includeFrench: data.includeFrench,
+        includeWriting: data.includeWriting,
+        challengeLevel: data.challengeLevel,
+        periodStart: data.periodStart,
+        periodEnd: data.periodEnd,
         notes: data.notes,
       };
     default:

@@ -1,6 +1,7 @@
-import { pb, COLLECTIONS } from '../lib/pocketbase';
+import { COLLECTIONS } from '../lib/pocketbase';
 import { storage } from '../lib/storage';
 import { queueSync } from '../hooks/useDatabase';
+import { documentBackendClient } from './documentBackendClient';
 import type {
   AchievementUnlock,
   ExternalActivitySession,
@@ -23,12 +24,7 @@ const OFFLINE_KEYS = {
 const collectionAvailability = new Map<string, boolean>();
 
 const checkOnline = async (): Promise<boolean> => {
-  try {
-    await pb.health.check();
-    return true;
-  } catch {
-    return false;
-  }
+  return documentBackendClient.isOnline();
 };
 
 const isPocketBaseRecordId = (id: string): boolean => /^[a-z0-9]{15}$/.test(id);
@@ -135,11 +131,11 @@ export const projectDataService = {
   async getByLearner(learnerId: string): Promise<LearningProject[]> {
     if (await shouldUseRemoteCollection(COLLECTIONS.PROJECTS)) {
       try {
-        const records = await pb.collection(COLLECTIONS.PROJECTS).getFullList({
-          filter: `learner = "${learnerId}"`,
-          sort: '-updated',
-        });
-        const projects = records.map(mapRecordToProject);
+        const records = await documentBackendClient.list(COLLECTIONS.PROJECTS);
+        const projects = records
+          .filter((record) => String(record.learner || record.learnerId || '') === learnerId)
+          .map(mapRecordToProject)
+          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
         storage.set(getProjectsKey(learnerId), projects);
         markCollectionAvailable(COLLECTIONS.PROJECTS);
         return projects;
@@ -163,8 +159,8 @@ export const projectDataService = {
 
       try {
         const record = shouldUpdateRemote
-          ? await pb.collection(COLLECTIONS.PROJECTS).update(project.id, omitRecordId(data))
-          : await pb.collection(COLLECTIONS.PROJECTS).create(omitRecordId(data));
+          ? await documentBackendClient.update(COLLECTIONS.PROJECTS, project.id, omitRecordId(data))
+          : await documentBackendClient.create(COLLECTIONS.PROJECTS, omitRecordId(data));
 
         const savedProject = mapRecordToProject(record);
         const cached = storage.get<LearningProject[]>(cacheKey, []);
@@ -214,11 +210,11 @@ export const projectStepDataService = {
   async getByProject(projectId: string): Promise<ProjectStep[]> {
     if (await shouldUseRemoteCollection(COLLECTIONS.PROJECT_STEPS)) {
       try {
-        const records = await pb.collection(COLLECTIONS.PROJECT_STEPS).getFullList({
-          filter: `project = "${projectId}"`,
-          sort: 'orderIndex',
-        });
-        const steps = records.map(mapRecordToProjectStep);
+        const records = await documentBackendClient.list(COLLECTIONS.PROJECT_STEPS);
+        const steps = records
+          .filter((record) => String(record.project || record.projectId || '') === projectId)
+          .map(mapRecordToProjectStep)
+          .sort((left, right) => left.orderIndex - right.orderIndex);
         storage.set(getProjectStepsKey(projectId), steps);
         markCollectionAvailable(COLLECTIONS.PROJECT_STEPS);
         return steps;
@@ -242,8 +238,8 @@ export const projectStepDataService = {
 
       try {
         const record = shouldUpdateRemote
-          ? await pb.collection(COLLECTIONS.PROJECT_STEPS).update(step.id, omitRecordId(data))
-          : await pb.collection(COLLECTIONS.PROJECT_STEPS).create(omitRecordId(data));
+          ? await documentBackendClient.update(COLLECTIONS.PROJECT_STEPS, step.id, omitRecordId(data))
+          : await documentBackendClient.create(COLLECTIONS.PROJECT_STEPS, omitRecordId(data));
 
         const savedStep = mapRecordToProjectStep(record);
         const cached = storage.get<ProjectStep[]>(cacheKey, []);
@@ -278,11 +274,11 @@ export const reflectionEntryDataService = {
   async getByLearner(learnerId: string): Promise<ReflectionEntry[]> {
     if (await shouldUseRemoteCollection(COLLECTIONS.REFLECTION_ENTRIES)) {
       try {
-        const records = await pb.collection(COLLECTIONS.REFLECTION_ENTRIES).getFullList({
-          filter: `learner = "${learnerId}"`,
-          sort: '-updated',
-        });
-        const entries = records.map(mapRecordToReflectionEntry);
+        const records = await documentBackendClient.list(COLLECTIONS.REFLECTION_ENTRIES);
+        const entries = records
+          .filter((record) => String(record.learner || record.learnerId || '') === learnerId)
+          .map(mapRecordToReflectionEntry)
+          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
         storage.set(getReflectionsKey(learnerId), entries);
         markCollectionAvailable(COLLECTIONS.REFLECTION_ENTRIES);
         return entries;
@@ -306,8 +302,8 @@ export const reflectionEntryDataService = {
 
       try {
         const record = shouldUpdateRemote
-          ? await pb.collection(COLLECTIONS.REFLECTION_ENTRIES).update(entry.id, omitRecordId(data))
-          : await pb.collection(COLLECTIONS.REFLECTION_ENTRIES).create(omitRecordId(data));
+          ? await documentBackendClient.update(COLLECTIONS.REFLECTION_ENTRIES, entry.id, omitRecordId(data))
+          : await documentBackendClient.create(COLLECTIONS.REFLECTION_ENTRIES, omitRecordId(data));
 
         const savedEntry = mapRecordToReflectionEntry(record);
         const cached = storage.get<ReflectionEntry[]>(cacheKey, []);
@@ -346,11 +342,11 @@ export const externalActivitySessionDataService = {
   async getByLearner(learnerId: string): Promise<ExternalActivitySession[]> {
     if (await shouldUseRemoteCollection(COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS)) {
       try {
-        const records = await pb.collection(COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS).getFullList({
-          filter: `learner = "${learnerId}"`,
-          sort: '-updated',
-        });
-        const sessions = records.map(mapRecordToExternalSession);
+        const records = await documentBackendClient.list(COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS);
+        const sessions = records
+          .filter((record) => String(record.learner || record.learnerId || '') === learnerId)
+          .map(mapRecordToExternalSession)
+          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
         storage.set(getExternalSessionsKey(learnerId), sessions);
         markCollectionAvailable(COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS);
         return sessions;
@@ -374,8 +370,12 @@ export const externalActivitySessionDataService = {
 
       try {
         const record = shouldUpdateRemote
-          ? await pb.collection(COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS).update(session.id, omitRecordId(data))
-          : await pb.collection(COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS).create(omitRecordId(data));
+          ? await documentBackendClient.update(
+              COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS,
+              session.id,
+              omitRecordId(data)
+            )
+          : await documentBackendClient.create(COLLECTIONS.EXTERNAL_ACTIVITY_SESSIONS, omitRecordId(data));
 
         const savedSession = mapRecordToExternalSession(record);
         const cached = storage.get<ExternalActivitySession[]>(cacheKey, []);
@@ -410,11 +410,11 @@ export const achievementUnlockDataService = {
   async getByLearner(learnerId: string): Promise<AchievementUnlock[]> {
     if (await shouldUseRemoteCollection(COLLECTIONS.ACHIEVEMENT_UNLOCKS)) {
       try {
-        const records = await pb.collection(COLLECTIONS.ACHIEVEMENT_UNLOCKS).getFullList({
-          filter: `learner = "${learnerId}"`,
-          sort: '-unlockedAt',
-        });
-        const unlocks = records.map(mapRecordToAchievementUnlock);
+        const records = await documentBackendClient.list(COLLECTIONS.ACHIEVEMENT_UNLOCKS);
+        const unlocks = records
+          .filter((record) => String(record.learner || record.learnerId || '') === learnerId)
+          .map(mapRecordToAchievementUnlock)
+          .sort((left, right) => new Date(right.unlockedAt).getTime() - new Date(left.unlockedAt).getTime());
         storage.set(getAchievementUnlocksKey(learnerId), unlocks);
         markCollectionAvailable(COLLECTIONS.ACHIEVEMENT_UNLOCKS);
         return unlocks;
@@ -446,8 +446,12 @@ export const achievementUnlockDataService = {
 
       try {
         const record = shouldUpdateRemote
-          ? await pb.collection(COLLECTIONS.ACHIEVEMENT_UNLOCKS).update(unlock.id, omitRecordId(data))
-          : await pb.collection(COLLECTIONS.ACHIEVEMENT_UNLOCKS).create(omitRecordId(data));
+          ? await documentBackendClient.update(
+              COLLECTIONS.ACHIEVEMENT_UNLOCKS,
+              unlock.id,
+              omitRecordId(data)
+            )
+          : await documentBackendClient.create(COLLECTIONS.ACHIEVEMENT_UNLOCKS, omitRecordId(data));
 
         const savedUnlock = mapRecordToAchievementUnlock(record);
         const cached = storage.get<AchievementUnlock[]>(cacheKey, []);
@@ -560,11 +564,12 @@ export const planningRuleDataService = {
   async getByLearner(learnerId: string): Promise<PlanningRule[]> {
     if (await shouldUseRemoteCollection(COLLECTIONS.PLANNING_RULES)) {
       try {
-        const records = await pb.collection(COLLECTIONS.PLANNING_RULES).getFullList({
-          filter: `learner = "${learnerId}"`,
-          sort: '-updated',
-        });
-        const rules = records.map(mapRecordToPlanningRule).map(normalizePlanningRule);
+        const records = await documentBackendClient.list(COLLECTIONS.PLANNING_RULES);
+        const rules = records
+          .filter((record) => String(record.learner || record.learnerId || '') === learnerId)
+          .map(mapRecordToPlanningRule)
+          .map(normalizePlanningRule)
+          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
         storage.set(getPlanningRulesKey(learnerId), rules);
         markCollectionAvailable(COLLECTIONS.PLANNING_RULES);
         return rules;
@@ -589,8 +594,12 @@ export const planningRuleDataService = {
 
       try {
         const record = shouldUpdateRemote
-          ? await pb.collection(COLLECTIONS.PLANNING_RULES).update(normalizedRule.id, omitRecordId(data))
-          : await pb.collection(COLLECTIONS.PLANNING_RULES).create(omitRecordId(data));
+          ? await documentBackendClient.update(
+              COLLECTIONS.PLANNING_RULES,
+              normalizedRule.id,
+              omitRecordId(data)
+            )
+          : await documentBackendClient.create(COLLECTIONS.PLANNING_RULES, omitRecordId(data));
 
         const savedRule = normalizePlanningRule(mapRecordToPlanningRule(record));
         const cached = storage.get<PlanningRule[]>(cacheKey, []);

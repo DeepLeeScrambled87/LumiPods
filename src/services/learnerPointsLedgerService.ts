@@ -1,7 +1,8 @@
 import { queueSync } from '../hooks/useDatabase';
-import { pb, COLLECTIONS } from '../lib/pocketbase';
+import { COLLECTIONS } from '../lib/pocketbase';
 import { storage } from '../lib/storage';
 import { announceLearnerPointsAward } from './pointsFeedbackService';
+import { documentBackendClient } from './documentBackendClient';
 import type { PointEvent, PointEventType } from '../types/points';
 
 export type LearnerPointActionId =
@@ -124,12 +125,7 @@ const OFFLINE_KEY_PREFIX = 'learner-points-ledger';
 const getLedgerKey = (learnerId: string) => `${OFFLINE_KEY_PREFIX}-${learnerId}`;
 
 const checkOnline = async (): Promise<boolean> => {
-  try {
-    await pb.health.check();
-    return true;
-  } catch {
-    return false;
-  }
+  return documentBackendClient.isOnline();
 };
 
 const buildRemoteDescription = (
@@ -209,7 +205,7 @@ export const learnerPointsLedgerService = {
 
     if (await checkOnline()) {
       try {
-        await pb.collection(COLLECTIONS.POINTS).create(remoteRecord);
+        await documentBackendClient.create(COLLECTIONS.POINTS, remoteRecord);
       } catch {
         queueSync(COLLECTIONS.POINTS, 'create', remoteRecord);
       }

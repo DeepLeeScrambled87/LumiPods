@@ -1,6 +1,6 @@
 import { isLearnerPortfolioArtifact } from '../lib/artifactScope';
 import { toLocalDateKey } from '../lib/dates';
-import { pb, COLLECTIONS } from '../lib/pocketbase';
+import { COLLECTIONS } from '../lib/pocketbase';
 import { ACHIEVEMENTS } from '../features/gamification/achievements';
 import {
   artifactDataService,
@@ -15,6 +15,7 @@ import {
   reflectionEntryDataService,
 } from './learningRecordsService';
 import { ACTION_POINTS_MATRIX, learnerPointsLedgerService } from './learnerPointsLedgerService';
+import { documentBackendClient } from './documentBackendClient';
 import type { PointEventType } from '../types/points';
 
 export const LEARNER_POINTS_UPDATED_EVENT = 'lumipods:learner-points-updated';
@@ -92,13 +93,20 @@ const getStoredActionPointEvents = async (
   }));
 
   try {
-    await pb.health.check();
-    const records = await pb.collection(COLLECTIONS.POINTS).getFullList({
-      filter: `family = "${familyId}" && learner = "${learnerId}"`,
-      sort: '-created',
-    });
+    const isOnline = await documentBackendClient.isOnline();
+    if (!isOnline) {
+      throw new Error('offline');
+    }
+    const records = await documentBackendClient.list(COLLECTIONS.POINTS);
 
-    return records.map((record) => {
+    return records
+      .filter(
+        (record) =>
+          String(record.family || record.familyId || '') === familyId &&
+          String(record.learner || record.learnerId || '') === learnerId
+      )
+      .sort((left, right) => new Date(String(right.created || '')).getTime() - new Date(String(left.created || '')).getTime())
+      .map((record) => {
       const parsed = parseRemotePointDescription(String(record.description || ''));
       return {
         id: String(record.id),
@@ -110,7 +118,7 @@ const getStoredActionPointEvents = async (
         description: parsed.cleanDescription || String(record.description || 'Points earned'),
         sourceKey: parsed.sourceKey,
       };
-    });
+      });
   } catch {
     const cutoffTime = Date.now() - historyWindowDays * 86400000;
     return localEvents
