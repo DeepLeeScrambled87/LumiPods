@@ -69,10 +69,10 @@ Appwrite is now the target production backend. The frontend can still run agains
 Runtime backend toggle for the frontend:
 
 ```env
-VITE_DATA_BACKEND=pocketbase
+VITE_DATA_BACKEND=appwrite
 VITE_POCKETBASE_URL=http://localhost:8090
 
-# Enable when the Appwrite runtime adapter is ready for the environment
+# Appwrite runtime target
 VITE_APPWRITE_ENDPOINT=
 VITE_APPWRITE_PROJECT_ID=
 VITE_APPWRITE_DATABASE_ID=lumipods
@@ -80,9 +80,10 @@ VITE_APPWRITE_BUCKET_ID=learner-artifacts
 ```
 
 Current adapter scope:
-- PocketBase remains the default runtime backend
-- Appwrite document reads/writes are scaffolded for core collections
-- artifact file upload/delete still remains PocketBase-backed until Appwrite storage auth/cutover is wired
+- Appwrite now covers the main LumiPods document runtime path
+- Appwrite artifact file upload/delete is wired
+- Parent auth/session is Appwrite-backed when `VITE_DATA_BACKEND=appwrite`
+- PocketBase can still be used locally as a fallback/runtime source during migration
 
 Useful commands:
 
@@ -120,7 +121,7 @@ Create a `.env` file for production:
 
 ```env
 # Frontend runtime
-VITE_DATA_BACKEND=pocketbase
+VITE_DATA_BACKEND=appwrite
 VITE_POCKETBASE_URL=https://your-pocketbase-instance.com
 VITE_APPWRITE_ENDPOINT=
 VITE_APPWRITE_PROJECT_ID=
