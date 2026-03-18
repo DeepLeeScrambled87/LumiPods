@@ -5,7 +5,7 @@ import type { User } from '../../types/user';
 import { createParentUser, createLearnerUser, ROLE_PERMISSIONS } from '../../types/user';
 import { storage } from '../../lib/storage';
 import { useFamily } from '../family';
-import { parentAuthService } from '../../services/pocketbase/parentAuthService';
+import { parentAuthService } from '../../services/parentAuthService';
 
 const AUTH_STORAGE_KEY = 'lumipods_auth';
 
@@ -137,7 +137,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [persistUser]);
 
   const logout = useCallback(() => {
-    parentAuthService.signOut();
+    void parentAuthService.signOut();
     persistUser(null);
   }, [persistUser]);
 

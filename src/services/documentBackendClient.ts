@@ -187,6 +187,7 @@ const toAppwritePayload = (collection: string, data: Record<string, unknown>): R
       return {
         legacyPocketBaseId: data.id,
         name: data.name,
+        ownerUserId: data.ownerUserId,
         currentPodId: data.currentPodId,
         currentWeek: data.currentWeek,
         timezone:

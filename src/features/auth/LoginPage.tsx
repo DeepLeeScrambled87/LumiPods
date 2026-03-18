@@ -18,7 +18,7 @@ const PARENT_MODE_LABELS: Record<ParentAccessMode, { title: string; description:
   },
   signup: {
     title: 'Create Parent Account',
-    description: 'Set up a real family account backed by PocketBase.',
+    description: 'Set up a real family account backed by the live app backend.',
   },
   local: {
     title: 'Device-Only Setup',

@@ -1,7 +1,7 @@
-// Database hook - Manages PocketBase connection with localStorage fallback
+// Database hook - Manages document backend connection with localStorage fallback
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { pb } from '../lib/pocketbase';
 import { storage } from '../lib/storage';
+import { documentBackendClient } from '../services/documentBackendClient';
 
 export type ConnectionStatus = 'connected' | 'offline' | 'connecting' | 'error';
 
@@ -34,11 +34,11 @@ export const useDatabase = (): UseDatabaseReturn => {
   // Check connection on mount and periodically
   const checkConnection = useCallback(async (): Promise<boolean> => {
     try {
-      await pb.health.check();
-      setStatus('connected');
-      return true;
+      const isOnline = await documentBackendClient.isOnline();
+      setStatus(isOnline ? 'connected' : 'offline');
+      return isOnline;
     } catch {
-      setStatus('offline');
+      setStatus('error');
       return false;
     }
   }, []);
@@ -93,13 +93,17 @@ export const useDatabase = (): UseDatabaseReturn => {
       try {
         switch (item.operation) {
           case 'create':
-            await pb.collection(item.collection).create(item.data);
+            await documentBackendClient.create(item.collection, item.data);
             break;
           case 'update':
-            await pb.collection(item.collection).update(item.data.id as string, item.data);
+            await documentBackendClient.update(
+              item.collection,
+              String(item.data.id || ''),
+              item.data
+            );
             break;
           case 'delete':
-            await pb.collection(item.collection).delete(item.data.id as string);
+            await documentBackendClient.delete(item.collection, String(item.data.id || ''));
             break;
         }
       } catch (error) {

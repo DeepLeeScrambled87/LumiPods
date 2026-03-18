@@ -64,6 +64,34 @@ export const familyDataService = {
     return storage.get<Family | null>(OFFLINE_KEYS.FAMILY, null);
   },
 
+  async getByOwnerUserId(ownerUserId: string): Promise<Family | null> {
+    const isOnline = await checkOnline();
+
+    if (isOnline) {
+      try {
+        const records = await documentBackendClient.list(COLLECTIONS.FAMILIES);
+        const familyRecord = records.find(
+          (record) => String(record.ownerUserId || '') === ownerUserId
+        );
+
+        if (familyRecord) {
+          const family = mapRecordToFamily(familyRecord);
+          storage.set(OFFLINE_KEYS.FAMILY, family);
+          return family;
+        }
+      } catch {
+        // Fall through to offline cache
+      }
+    }
+
+    const cached = storage.get<Family | null>(OFFLINE_KEYS.FAMILY, null);
+    if (cached?.ownerUserId === ownerUserId) {
+      return cached;
+    }
+
+    return null;
+  },
+
   async save(family: Family): Promise<Family> {
     storage.set(OFFLINE_KEYS.FAMILY, family);
     
@@ -106,10 +134,11 @@ export const familyDataService = {
     return family;
   },
 
-  async create(name: string): Promise<Family> {
+  async create(name: string, ownerUserId?: string): Promise<Family> {
     const family: Family = {
       id: `family-${Date.now()}`,
       name,
+      ownerUserId,
       learners: [],
       currentPodId: null,
       currentWeek: 1,
@@ -648,6 +677,7 @@ function mapRecordToFamily(record: Record<string, unknown>): Family {
   return {
     id: record.id as string,
     name: record.name as string,
+    ownerUserId: (record.ownerUserId as string) || undefined,
     learners: [],
     currentPodId: (record.currentPodId as string) || null,
     currentWeek: (record.currentWeek as number) || 1,
@@ -670,6 +700,7 @@ function mapFamilyToRecord(family: Family): Record<string, unknown> {
   return {
     id: family.id,
     name: family.name,
+    ownerUserId: family.ownerUserId,
     currentPodId: family.currentPodId,
     currentWeek: family.currentWeek,
     settings: family.settings,

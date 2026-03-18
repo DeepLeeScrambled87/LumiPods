@@ -16,6 +16,7 @@ export interface FamilySettings {
 export interface Family {
   id: string;
   name: string;
+  ownerUserId?: string;
   learners: Learner[];
   currentPodId: string | null;
   currentWeek: number;
@@ -38,6 +39,7 @@ export const DEFAULT_FAMILY_SETTINGS: FamilySettings = {
 export const createFamily = (name: string): Family => ({
   id: `family-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
   name,
+  ownerUserId: undefined,
   learners: [],
   currentPodId: null,
   currentWeek: 1,
