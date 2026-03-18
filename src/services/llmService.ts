@@ -69,6 +69,18 @@ export type TutorMode =
   | 'maker'
   | 'french';
 
+export const OPENAI_VOICE_OPTIONS = [
+  { value: 'alloy', label: 'Alloy' },
+  { value: 'ash', label: 'Ash' },
+  { value: 'coral', label: 'Coral' },
+  { value: 'echo', label: 'Echo' },
+  { value: 'fable', label: 'Fable' },
+  { value: 'nova', label: 'Nova' },
+  { value: 'onyx', label: 'Onyx' },
+  { value: 'sage', label: 'Sage' },
+  { value: 'shimmer', label: 'Shimmer' },
+] as const;
+
 // Default configuration
 const DEFAULT_LLM_PROVIDER: LLMProvider =
   (import.meta.env.VITE_LLM_PROVIDER as LLMProvider | undefined) ||
@@ -289,7 +301,11 @@ const playAudioBlob = async (blob: Blob): Promise<void> => {
   });
 };
 
-const speakWithOpenAI = async (text: string, language: string): Promise<void> => {
+const speakWithOpenAI = async (
+  text: string,
+  language: string,
+  voiceOverride?: string
+): Promise<void> => {
   if (!hasOpenAIProxy() && !hasDirectOpenAIKey()) {
     throw new Error('OpenAI proxy or direct API key not configured');
   }
@@ -310,7 +326,7 @@ const speakWithOpenAI = async (text: string, language: string): Promise<void> =>
     headers,
     body: JSON.stringify({
       model: currentSpeechConfig.openaiTtsModel || 'gpt-4o-mini-tts',
-      voice: currentSpeechConfig.openaiVoice || 'alloy',
+      voice: voiceOverride || currentSpeechConfig.openaiVoice || 'alloy',
       input: stripMarkdownForSpeech(text),
       format: 'mp3',
       instructions:
@@ -368,15 +384,15 @@ export const canUseSpeechOutput = (): boolean => {
 
 const speakTextInternal = async (
   text: string,
-  options?: { language?: string; fallbackToBrowser?: boolean }
+  options?: { language?: string; fallbackToBrowser?: boolean; voiceOverride?: string }
 ): Promise<void> => {
   const language = options?.language || 'en-US';
-  const fallbackToBrowser = options?.fallbackToBrowser !== false;
+  const fallbackToBrowser = options?.fallbackToBrowser ?? currentSpeechConfig.provider === 'browser';
 
   try {
     switch (currentSpeechConfig.provider) {
       case 'openai':
-        await speakWithOpenAI(text, language);
+        await speakWithOpenAI(text, language, options?.voiceOverride);
         return;
       case 'local':
         await speakWithLocalEndpoint(text, language);
@@ -396,7 +412,7 @@ const speakTextInternal = async (
 
 export const speakText = async (
   text: string,
-  options?: { language?: string; fallbackToBrowser?: boolean }
+  options?: { language?: string; fallbackToBrowser?: boolean; voiceOverride?: string }
 ): Promise<void> => {
   stopSpeaking();
   await speakTextInternal(text, options);
@@ -420,17 +436,17 @@ const getSpeechChunkBoundary = (buffer: string): number => {
     return lastLineBreak + 1;
   }
 
-  if (buffer.length < 70) {
+  if (buffer.length < 28) {
     return -1;
   }
 
   const clauseBoundary = Math.max(buffer.lastIndexOf(', '), buffer.lastIndexOf('; '), buffer.lastIndexOf(': '));
-  if (clauseBoundary >= 35) {
+  if (clauseBoundary >= 18) {
     return clauseBoundary + 2;
   }
 
   const wordBoundary = buffer.lastIndexOf(' ');
-  if (wordBoundary >= 45) {
+  if (wordBoundary >= 20) {
     return wordBoundary + 1;
   }
 
@@ -438,13 +454,13 @@ const getSpeechChunkBoundary = (buffer: string): number => {
 };
 
 export const createSpeechStream = (
-  options?: { language?: string; fallbackToBrowser?: boolean }
+  options?: { language?: string; fallbackToBrowser?: boolean; voiceOverride?: string }
 ): SpeechStreamController => {
   stopSpeaking();
 
   const sessionId = currentSpeechSessionId;
   const language = options?.language || 'en-US';
-  const fallbackToBrowser = options?.fallbackToBrowser !== false;
+  const fallbackToBrowser = options?.fallbackToBrowser ?? currentSpeechConfig.provider === 'browser';
   const queue: string[] = [];
   let buffer = '';
   let isProcessing = false;
@@ -476,6 +492,7 @@ export const createSpeechStream = (
         await speakTextInternal(nextChunk, {
           language,
           fallbackToBrowser,
+          voiceOverride: options?.voiceOverride,
         });
       }
     } finally {

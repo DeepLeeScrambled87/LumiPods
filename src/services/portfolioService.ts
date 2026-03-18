@@ -12,6 +12,7 @@ import {
 } from '../lib/artifactScope';
 import { artifactDataService } from './dataService';
 import { syncLearnerPointsBalance } from './pointsBalanceService';
+import { announceLearnerPointsAward } from './pointsFeedbackService';
 import type { Artifact } from '../types/artifact';
 import type { LearnerCompetency } from '../types/competency';
 import type { SkillLevel } from '../types/skillLevel';
@@ -141,6 +142,14 @@ export const portfolioService = {
     const savedArtifact = await artifactDataService.save(newArtifact, { file: artifact.file });
     if (savedArtifact.familyId && isLearnerPortfolioArtifact(savedArtifact)) {
       await syncLearnerPointsBalance(savedArtifact.familyId, savedArtifact.learnerId);
+      announceLearnerPointsAward({
+        familyId: savedArtifact.familyId,
+        learnerId: savedArtifact.learnerId,
+        points: 15,
+        label: 'Portfolio Artifact',
+        description: savedArtifact.title,
+        timestamp: savedArtifact.createdAt,
+      });
     }
     return savedArtifact;
   },

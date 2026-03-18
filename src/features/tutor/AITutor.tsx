@@ -28,18 +28,22 @@ import { useAuth } from '../auth/AuthContext';
 import { useFamily } from '../family';
 import { curriculumService } from '../../services/curriculumService';
 import { learningPersonalizationService } from '../../services/learningPersonalizationService';
+import { learnerPointsLedgerService } from '../../services/learnerPointsLedgerService';
+import { syncLearnerPointsBalance } from '../../services/pointsBalanceService';
 import {
   AI_CONFIG_EVENT,
   canUseSpeechOutput,
   createSpeechStream,
   configureSpeech,
   getSpeechConfig,
+  OPENAI_VOICE_OPTIONS,
   speakText,
   stopSpeaking,
   streamChat,
   type ChatMessage,
   type TutorMode,
 } from '../../services/llmService';
+import { toLocalDateKey } from '../../lib/dates';
 import { getSkillLevel } from '../../types/skillLevel';
 
 interface Message {
@@ -173,6 +177,37 @@ const getQuickPromptsForMode = (mode: TutorMode, isLearner: boolean): string[] =
   return isLearner ? QUICK_PROMPTS.learner : QUICK_PROMPTS.parent;
 };
 
+const LUMI_USAGE_STORAGE_KEY = 'lumipods:lumi-usage';
+const LUMI_REWARD_WINDOW_MS = 30 * 60 * 1000;
+
+interface LumiUsageRecord {
+  activeMs: number;
+  rewardedChunks: number;
+}
+
+const getLumiUsageMap = (): Record<string, LumiUsageRecord> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LUMI_USAGE_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, LumiUsageRecord>) : {};
+  } catch {
+    return {};
+  }
+};
+
+const setLumiUsageRecord = (key: string, record: LumiUsageRecord): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const usageMap = getLumiUsageMap();
+  usageMap[key] = record;
+  window.localStorage.setItem(LUMI_USAGE_STORAGE_KEY, JSON.stringify(usageMap));
+};
+
 export const AITutor: React.FC<AITutorProps> = ({
   isOpen = true,
   onClose,
@@ -180,7 +215,7 @@ export const AITutor: React.FC<AITutorProps> = ({
   isFullPage = false,
 }) => {
   const { user, isLearner } = useAuth();
-  const { family, getLearner } = useFamily();
+  const { family, getLearner, updateLearner } = useFamily();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -193,6 +228,7 @@ export const AITutor: React.FC<AITutorProps> = ({
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const lastSpokenMessageIdRef = useRef<string | null>(null);
   const messagesLengthRef = useRef(0);
+  const lastOpenedGreetingIdRef = useRef<string | null>(null);
 
   const currentLearner = user?.learnerId ? getLearner(user.learnerId) : null;
   const activePodPlan = family ? curriculumService.getActivePod(family.id) : null;
@@ -219,6 +255,8 @@ export const AITutor: React.FC<AITutorProps> = ({
     currentLearner
   );
   const learnerBand = currentLearner ? getSkillLevel(currentLearner.skillLevel).ageRange : undefined;
+  const preferredLearnerVoice = currentLearner?.preferences?.lumiVoice;
+  const effectiveOpenAIVoice = preferredLearnerVoice || getSpeechConfig().openaiVoice || 'alloy';
   const speechWindow =
     typeof window !== 'undefined' ? (window as WindowWithSpeechRecognition) : undefined;
   const supportsSpeechOutput = canUseSpeechOutput();
@@ -262,6 +300,89 @@ export const AITutor: React.FC<AITutorProps> = ({
       setMessages([welcomeMessage]);
     }
   }, [currentLearner, isLearner, messages.length, tutorMode]);
+
+  useEffect(() => {
+    if (!isLearner || !family || !currentLearner) {
+      return;
+    }
+
+    const hasActiveConversation = messages.some((message) => message.role === 'user');
+    if (!hasActiveConversation) {
+      return;
+    }
+
+    const usageDateKey = toLocalDateKey();
+    const usageKey = `${family.id}:${currentLearner.id}:${usageDateKey}`;
+    let lastTick = Date.now();
+    let isUnmounted = false;
+
+    const flushUsage = async (countElapsedWhileHidden: boolean = false) => {
+      const now = Date.now();
+      const elapsed = Math.max(0, now - lastTick);
+      lastTick = now;
+
+      if (!countElapsedWhileHidden && typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
+
+      if (elapsed <= 0) {
+        return;
+      }
+
+      const currentRecord = getLumiUsageMap()[usageKey] || { activeMs: 0, rewardedChunks: 0 };
+      const nextRecord: LumiUsageRecord = {
+        activeMs: currentRecord.activeMs + elapsed,
+        rewardedChunks: currentRecord.rewardedChunks,
+      };
+      const nextChunks = Math.floor(nextRecord.activeMs / LUMI_REWARD_WINDOW_MS);
+
+      setLumiUsageRecord(usageKey, nextRecord);
+
+      if (nextChunks <= currentRecord.rewardedChunks) {
+        return;
+      }
+
+      for (let chunk = currentRecord.rewardedChunks; chunk < nextChunks; chunk += 1) {
+        await learnerPointsLedgerService.award({
+          familyId: family.id,
+          learnerId: currentLearner.id,
+          actionId: 'lumi_deep_dive_30m',
+          description: `Spent 30 focused minutes learning with Lumi on ${usageDateKey}.`,
+          sourceKey: `lumi-30:${currentLearner.id}:${usageDateKey}:${chunk + 1}`,
+        });
+      }
+
+      setLumiUsageRecord(usageKey, {
+        ...nextRecord,
+        rewardedChunks: nextChunks,
+      });
+
+      if (!isUnmounted) {
+        await syncLearnerPointsBalance(family.id, currentLearner.id);
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void flushUsage();
+    }, 60_000);
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        void flushUsage(true);
+      } else {
+        lastTick = Date.now();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      isUnmounted = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      void flushUsage(true);
+    };
+  }, [currentLearner, family, isLearner, messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -318,10 +439,53 @@ export const AITutor: React.FC<AITutorProps> = ({
     lastSpokenMessageIdRef.current = latestAssistantMessage.id;
     void speakText(latestAssistantMessage.content, {
       language: getSpeechLanguage(tutorMode),
+      fallbackToBrowser: false,
+      voiceOverride: effectiveOpenAIVoice,
     }).catch((error) => {
       console.warn('Speech playback failed:', error);
     });
-  }, [messages, speechRepliesEnabled, supportsSpeechOutput, tutorMode]);
+  }, [effectiveOpenAIVoice, messages, speechRepliesEnabled, supportsSpeechOutput, tutorMode]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      lastOpenedGreetingIdRef.current = null;
+      if (!messages.some((message) => message.role === 'user')) {
+        lastSpokenMessageIdRef.current = null;
+      }
+      return;
+    }
+
+    if (!speechRepliesEnabled || !supportsSpeechOutput) {
+      return;
+    }
+
+    const hasUserMessages = messages.some((message) => message.role === 'user');
+    if (hasUserMessages) {
+      return;
+    }
+
+    const latestAssistantMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === 'assistant');
+
+    if (
+      !latestAssistantMessage ||
+      lastOpenedGreetingIdRef.current === latestAssistantMessage.id ||
+      lastSpokenMessageIdRef.current !== null
+    ) {
+      return;
+    }
+
+    lastOpenedGreetingIdRef.current = latestAssistantMessage.id;
+    lastSpokenMessageIdRef.current = latestAssistantMessage.id;
+    void speakText(latestAssistantMessage.content, {
+      language: getSpeechLanguage(tutorMode),
+      fallbackToBrowser: false,
+      voiceOverride: effectiveOpenAIVoice,
+    }).catch((error) => {
+      console.warn('Greeting speech playback failed:', error);
+    });
+  }, [effectiveOpenAIVoice, isOpen, messages, speechRepliesEnabled, supportsSpeechOutput, tutorMode]);
 
   const handleSend = async (text?: string) => {
     const messageText = text || input.trim();
@@ -364,6 +528,8 @@ export const AITutor: React.FC<AITutorProps> = ({
     const speechStream = shouldStreamSpeech
       ? createSpeechStream({
           language: getSpeechLanguage(tutorMode),
+          fallbackToBrowser: false,
+          voiceOverride: effectiveOpenAIVoice,
         })
       : null;
     let hasRenderedAssistantMessage = false;
@@ -492,9 +658,27 @@ export const AITutor: React.FC<AITutorProps> = ({
 
     void speakText(content, {
       language: getSpeechLanguage(tutorMode),
+      fallbackToBrowser: false,
+      voiceOverride: effectiveOpenAIVoice,
     }).catch((error) => {
       console.warn('Speech playback failed:', error);
     });
+  };
+
+  const handleVoiceChange = async (nextVoice: string) => {
+    if (!currentLearner) {
+      return;
+    }
+
+    stopSpeaking();
+    await Promise.resolve(
+      updateLearner(currentLearner.id, {
+        preferences: {
+          ...(currentLearner.preferences || {}),
+          lumiVoice: nextVoice || undefined,
+        },
+      })
+    );
   };
 
   const handleToggleListening = () => {
@@ -545,6 +729,7 @@ export const AITutor: React.FC<AITutorProps> = ({
     isExpanded || isFullPage
       ? 'fixed inset-0 z-50 bg-white'
       : 'fixed bottom-4 right-4 z-50 h-[600px] w-96 rounded-2xl border border-slate-200 bg-white shadow-2xl';
+  const useIconOnlyFooterActions = !isFullPage && !isExpanded;
 
   return (
     <motion.div
@@ -582,8 +767,28 @@ export const AITutor: React.FC<AITutorProps> = ({
                   : TUTOR_MODES[tutorMode].description}
               </p>
               <p className={cn('text-[11px]', tutorMode === 'french' ? 'text-blue-700/90' : 'text-white/70')}>
-                Voice: {speechProviderLabel}
+                Voice: {speechProviderLabel}{speechProviderLabel === 'openai' ? ` • ${effectiveOpenAIVoice}` : ''}
               </p>
+              {currentLearner && speechProviderLabel === 'openai' && (
+                <select
+                  value={preferredLearnerVoice || ''}
+                  onChange={(event) => void handleVoiceChange(event.target.value)}
+                  className={cn(
+                    'mt-1 rounded-md border px-2 py-1 text-[11px] outline-none',
+                    tutorMode === 'french'
+                      ? 'border-blue-200 bg-white text-blue-900'
+                      : 'border-white/20 bg-white/10 text-white'
+                  )}
+                  title="Choose Lumi voice for this learner"
+                >
+                  <option value="">Use family default</option>
+                  {OPENAI_VOICE_OPTIONS.map((voice) => (
+                    <option key={voice.value} value={voice.value} className="text-slate-900">
+                      {voice.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -859,8 +1064,11 @@ export const AITutor: React.FC<AITutorProps> = ({
                 onClick={handleToggleListening}
                 disabled={isTyping}
                 icon={isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                className={useIconOnlyFooterActions ? 'w-11 px-0' : undefined}
+                title={isListening ? 'Stop speaking input' : 'Speak to Lumi'}
+                aria-label={isListening ? 'Stop speaking input' : 'Speak to Lumi'}
               >
-                {isListening ? 'Stop' : 'Speak'}
+                {!useIconOnlyFooterActions ? (isListening ? 'Stop' : 'Speak') : null}
               </Button>
             )}
             <Button
@@ -868,8 +1076,11 @@ export const AITutor: React.FC<AITutorProps> = ({
               variant="primary"
               disabled={!input.trim() || isTyping}
               icon={<Send className="h-4 w-4" />}
+              className={useIconOnlyFooterActions ? 'w-11 px-0' : undefined}
+              title="Send message"
+              aria-label="Send message"
             >
-              Send
+              {!useIconOnlyFooterActions ? 'Send' : null}
             </Button>
           </form>
         </div>

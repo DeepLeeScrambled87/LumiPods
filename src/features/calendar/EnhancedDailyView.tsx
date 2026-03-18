@@ -3,8 +3,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { Clock, Pause, Check, Plus, ChevronLeft, ChevronRight, Zap, Brain } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
+import { toLocalDateKey } from '../../lib/dates';
 import { finalizeBlockCompletion } from '../../services/blockCompletionService';
 import { launchTrackedExternalSession } from '../../services/externalProgressSyncService';
+import { learnerPointsLedgerService } from '../../services/learnerPointsLedgerService';
+import { announceLearnerPointsAward } from '../../services/pointsFeedbackService';
+import { syncLearnerPointsBalance } from '../../services/pointsBalanceService';
 import { scheduleService } from '../../services/scheduleService';
 import { syncScheduleProgress } from '../../services/scheduleProgressSync';
 import { ScheduleBlockCard } from './ScheduleBlockCard';
@@ -12,6 +16,21 @@ import { BlockDetailsModal } from './BlockDetailsModal';
 import { EnergyTracker } from './EnergyTracker';
 import type { BlockCompletionDetails, DailySchedule, ScheduleBlock } from '../../types/schedule';
 import { BLOCK_TYPE_CONFIG } from '../../types/schedule';
+
+const ON_TIME_START_TOLERANCE_MINUTES = 5;
+
+const isOnTimeStart = (date: string, startTime?: string, now: Date = new Date()): boolean => {
+  if (!startTime) {
+    return false;
+  }
+
+  const scheduled = new Date(`${date}T${startTime}:00`);
+  if (Number.isNaN(scheduled.getTime())) {
+    return false;
+  }
+
+  return Math.abs(now.getTime() - scheduled.getTime()) / 60000 <= ON_TIME_START_TOLERANCE_MINUTES;
+};
 
 interface EnhancedDailyViewProps {
   learnerId: string;
@@ -41,7 +60,7 @@ export function EnhancedDailyView({
   const [currentTime, setCurrentTime] = useState(new Date());
   const [elapsedTime, setElapsedTime] = useState(0);
 
-  const dateStr = date.toISOString().split('T')[0];
+  const dateStr = toLocalDateKey(date);
 
   // Load schedule
   useEffect(() => {
@@ -125,11 +144,22 @@ export function EnhancedDailyView({
       ? scheduleService.resumeBlock(learnerId, dateStr, block.id)
       : scheduleService.startBlock(learnerId, dateStr, block.id);
     if (updated) {
+      if (currentBlock?.status !== 'rescheduled' && isOnTimeStart(dateStr, updated.startTime)) {
+        await learnerPointsLedgerService.award({
+          familyId,
+          learnerId,
+          actionId: 'on_time_start',
+          description: `Started "${updated.title}" on time.`,
+          sourceKey: `on-time:${learnerId}:${dateStr}:${updated.id}`,
+        });
+        await syncLearnerPointsBalance(familyId, learnerId);
+      }
+
       setActiveBlock(updated);
       setElapsedTime(0);
       setSchedule(scheduleService.getDailySchedule(learnerId, dateStr));
     }
-  }, [dateStr, handleLaunchBlock, learnerId]);
+  }, [dateStr, familyId, handleLaunchBlock, learnerId]);
 
   const handlePauseBlock = useCallback((blockId: string) => {
     const updated = scheduleService.pauseBlock(learnerId, dateStr, blockId);
@@ -162,6 +192,16 @@ export function EnhancedDailyView({
       setSchedule(nextSchedule);
       if (nextSchedule) {
         void syncScheduleProgress(nextSchedule);
+      }
+      if (updated.type !== 'break') {
+        announceLearnerPointsAward({
+          familyId,
+          learnerId,
+          points: 10,
+          label: 'Session Complete',
+          description: updated.title,
+          timestamp: updated.completedAt || new Date().toISOString(),
+        });
       }
     }
   }, [dateStr, elapsedTime, familyId, learnerId]);
@@ -413,6 +453,15 @@ export function EnhancedDailyView({
           onSkip={(reason) => handleSkipBlock(selectedBlock.id, reason)}
           onAddNote={(note) => {
             scheduleService.addNoteToBlock(learnerId, dateStr, selectedBlock.id, note);
+            void learnerPointsLedgerService
+              .award({
+                familyId,
+                learnerId,
+                actionId: 'session_note_added',
+                blockId: selectedBlock.id,
+                description: `Added a note for "${selectedBlock.title}".`,
+              })
+              .then(() => syncLearnerPointsBalance(familyId, learnerId));
             setSchedule(scheduleService.getDailySchedule(learnerId, dateStr));
           }}
         />

@@ -23,10 +23,14 @@ import {
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
+import { storage } from '../../lib/storage';
+import { toLocalDateKey } from '../../lib/dates';
 import { curriculumService } from '../../services/curriculumService';
 import { foundationalRailService } from '../../services/foundationalRailService';
+import { learnerPointsLedgerService } from '../../services/learnerPointsLedgerService';
 import { portfolioService } from '../../services/portfolioService';
 import quizProgressService from '../../services/quizProgressService';
+import { syncLearnerPointsBalance } from '../../services/pointsBalanceService';
 import { useFamily } from '../family';
 import type { QuizQuestion, SkillLevelId } from '../../types/curriculum';
 import { ARTIFACT_TYPE_CONFIG, type Artifact } from '../../types/artifact';
@@ -505,12 +509,49 @@ export function BlockDetailsModal({
   const isSkipped = block.status === 'skipped';
   const skillLevel = normalizeSkillLevel(learnerSkillLevel);
   const { family } = useFamily();
+  const objectiveProgressKey = learnerId
+    ? `block-objectives:${learnerId}:${scheduleDate || toLocalDateKey()}:${block.id}`
+    : null;
+
+  const handleResourceReward = async (params: {
+    sourceKey: string;
+    title: string;
+    isVideo?: boolean;
+    artifactId?: string;
+  }) => {
+    if (!family?.id || !learnerId) {
+      return;
+    }
+
+    const awarded = await learnerPointsLedgerService.award({
+      familyId: family.id,
+      learnerId,
+      actionId: params.isVideo ? 'video_resource_opened' : 'resource_opened',
+      artifactId: params.artifactId,
+      description: `${params.isVideo ? 'Opened a teaching video' : 'Opened a learning resource'}: ${params.title}.`,
+      sourceKey: params.sourceKey,
+    });
+
+    if (awarded) {
+      await syncLearnerPointsBalance(family.id, learnerId);
+    }
+  };
 
   useEffect(() => {
     setQuizQuestionIndex(0);
     setShowQuizHint(false);
     setActiveTab('overview');
   }, [block.id]);
+
+  useEffect(() => {
+    if (!objectiveProgressKey) {
+      setCheckedObjectives(new Set());
+      return;
+    }
+
+    const saved = storage.get<number[]>(objectiveProgressKey, []);
+    setCheckedObjectives(new Set(saved));
+  }, [objectiveProgressKey]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -654,7 +695,7 @@ export function BlockDetailsModal({
           ? `rail-${block.railTrackId}-${block.railModuleId}`
           : block.podId || quizScopeKey,
       weekNumber: block.weekNumber || 1,
-      date: scheduleDate || new Date().toISOString().split('T')[0],
+      date: scheduleDate || toLocalDateKey(),
       question,
       selectedAnswer,
     });
@@ -705,6 +746,10 @@ export function BlockDetailsModal({
       newChecked.add(index);
     }
     setCheckedObjectives(newChecked);
+
+    if (objectiveProgressKey) {
+      storage.set(objectiveProgressKey, Array.from(newChecked).sort((left, right) => left - right));
+    }
   };
 
   const tabs: { id: TabId; label: string; icon?: string }[] = [
@@ -808,6 +853,21 @@ export function BlockDetailsModal({
               onLaunch={onLaunch}
               relatedPodAssets={relatedPodAssets}
               isLoadingRelatedPodAssets={isLoadingRelatedPodAssets}
+              onOpenPodAsset={(asset) =>
+                void handleResourceReward({
+                  sourceKey: `pod-asset:${learnerId || 'unknown'}:${asset.id}`,
+                  title: asset.title,
+                  isVideo: asset.type === 'video',
+                  artifactId: asset.id,
+                })
+              }
+              onOpenSourceLink={(link) =>
+                void handleResourceReward({
+                  sourceKey: `source-link:${learnerId || 'unknown'}:${link.id}`,
+                  title: link.title,
+                  isVideo: link.type?.toLowerCase().includes('video'),
+                })
+              }
             />
           )}
 
@@ -1384,11 +1444,15 @@ function ResourcesTab({
   onLaunch,
   relatedPodAssets,
   isLoadingRelatedPodAssets,
+  onOpenPodAsset,
+  onOpenSourceLink,
 }: {
   block: ScheduleBlock;
   onLaunch?: () => void;
   relatedPodAssets: Artifact[];
   isLoadingRelatedPodAssets: boolean;
+  onOpenPodAsset?: (asset: Artifact) => void;
+  onOpenSourceLink?: (link: NonNullable<ScheduleBlock['sourceLinks']>[number]) => void;
 }) {
   const materials = block.materials.length > 0 
     ? block.materials 
@@ -1453,6 +1517,7 @@ function ResourcesTab({
                   href={asset.url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() => onOpenPodAsset?.(asset)}
                   className="flex items-start justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 hover:bg-slate-50"
                 >
                   {content}
@@ -1523,6 +1588,7 @@ function ResourcesTab({
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => onOpenSourceLink?.(link)}
                 className="flex items-start justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 hover:bg-slate-50"
               >
                 <div className="pr-4">

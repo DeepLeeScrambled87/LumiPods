@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Layers, Check, ArrowRight, Clock, Target, Star, BookOpen, Info, X, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Layers, Check, ArrowRight, Clock, Target, Star, BookOpen, Info, X, Trash2, Send, ShieldCheck } from 'lucide-react';
 import { m } from 'framer-motion';
 import { toast } from 'sonner';
 import { cn } from '../../lib/cn';
@@ -11,12 +11,18 @@ import { Badge } from '../ui/Badge';
 import { Select } from '../ui/Select';
 import { PodLibraryModal } from './PodLibraryModal';
 import { useFamily } from '../../features/family';
+import { useAuth } from '../../features/auth';
 import { ALL_PODS, POD_CATEGORIES } from '../../data/pods';
 import { POD_THEME_CONFIG } from '../../types/pod';
 import { curriculumService } from '../../services/curriculumService';
 import { scheduleService } from '../../services/scheduleService';
 import { planningRuleDataService } from '../../services/learningRecordsService';
 import { podPacingService, type PodPlanningAnswers } from '../../services/podPacingService';
+import {
+  podInterestService,
+  POD_INTEREST_REQUESTS_UPDATED_EVENT,
+  type PodInterestRequest,
+} from '../../services/podInterestService';
 import type { Pod } from '../../types/pod';
 import type { PlanningRule } from '../../types/learning';
 import type { Learner } from '../../types/learner';
@@ -120,6 +126,7 @@ const arraysMatch = (left: string[], right: string[]): boolean =>
 
 export const PodsPage: React.FC = () => {
   const { family, setCurrentPod } = useFamily();
+  const { currentLearnerId, isLearner } = useAuth();
   const [selectedPod, setSelectedPod] = useState<Pod | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [libraryPod, setLibraryPod] = useState<Pod | null>(null);
@@ -129,49 +136,68 @@ export const PodsPage: React.FC = () => {
   const [planningAnswers, setPlanningAnswers] = useState<PodPlanningAnswers>({});
   const [selectedMonthlyPodIds, setSelectedMonthlyPodIds] = useState<string[]>([]);
   const [selectedTargetLearnerIds, setSelectedTargetLearnerIds] = useState<string[]>([]);
+  const [pendingPodRequests, setPendingPodRequests] = useState<PodInterestRequest[]>([]);
 
   const currentPodId = family?.currentPodId;
   const todayDate = new Date().toISOString().split('T')[0];
   const monthlyMixStorageKey = family?.id ? getMonthlyMixStorageKey(family.id) : null;
-  const activeAssignments: ActivePodAssignment[] = family?.id
-    ? family.learners.flatMap((learner) => {
-        const rule = planningRuleDataService.getCachedActiveForLearner(family.id, learner.id, todayDate);
-        if (!rule) {
-          return [];
-        }
+  const activeAssignments = useMemo<ActivePodAssignment[]>(
+    () =>
+      family?.id
+        ? family.learners.flatMap((learner) => {
+            const rule = planningRuleDataService.getCachedActiveForLearner(family.id, learner.id, todayDate);
+            if (!rule) {
+              return [];
+            }
 
-        return [
-          {
-            learner,
-            rule,
-            primaryPod: rule.primaryPodId ? getPodById(rule.primaryPodId) || null : null,
-            supportPods: getActiveSupportPodIdsForDate(rule.supportPodIds, rule.supportPodPlans, todayDate)
-              .map((podId) => getPodById(podId))
-              .filter((pod): pod is Pod => Boolean(pod)),
-          } satisfies ActivePodAssignment,
-        ];
-      })
-    : [];
+            return [
+              {
+                learner,
+                rule,
+                primaryPod: rule.primaryPodId ? getPodById(rule.primaryPodId) || null : null,
+                supportPods: getActiveSupportPodIdsForDate(rule.supportPodIds, rule.supportPodPlans, todayDate)
+                  .map((podId) => getPodById(podId))
+                  .filter((pod): pod is Pod => Boolean(pod)),
+              } satisfies ActivePodAssignment,
+            ];
+          })
+        : [],
+    [family, todayDate]
+  );
+  const visibleAssignments = useMemo(
+    () =>
+      isLearner && currentLearnerId
+        ? activeAssignments.filter((assignment) => assignment.learner.id === currentLearnerId)
+        : activeAssignments,
+    [activeAssignments, currentLearnerId, isLearner]
+  );
   const activeMixPodIds = Array.from(
     new Set(
-      activeAssignments.flatMap((assignment) => [
+      visibleAssignments.flatMap((assignment) => [
         ...(assignment.rule.primaryPodId ? [assignment.rule.primaryPodId] : []),
         ...assignment.supportPods.map((pod) => pod.id),
       ])
     )
   ).slice(0, MAX_MONTHLY_PODS);
   const activePrimaryPodIds = new Set(
-    activeAssignments
+    visibleAssignments
       .map((assignment) => assignment.rule.primaryPodId)
       .filter((podId): podId is string => Boolean(podId))
   );
   const activeCompanionPodIds = new Set(
-    activeAssignments.flatMap((assignment) => assignment.supportPods.map((pod) => pod.id))
+    visibleAssignments.flatMap((assignment) => assignment.supportPods.map((pod) => pod.id))
   );
   const activeMixSeed = activeMixPodIds.join('|');
+  const visiblePendingRequests = useMemo(
+    () =>
+      isLearner && currentLearnerId
+        ? pendingPodRequests.filter((request) => request.learnerId === currentLearnerId)
+        : pendingPodRequests,
+    [currentLearnerId, isLearner, pendingPodRequests]
+  );
   const activeSupportPods = Array.from(
     new Map(
-      activeAssignments
+      visibleAssignments
         .flatMap((assignment) => assignment.supportPods)
         .map((pod) => [pod.id, pod] as const)
     ).values()
@@ -267,6 +293,21 @@ export const PodsPage: React.FC = () => {
     storage.set(monthlyMixStorageKey, selectedMonthlyPodIds);
   }, [monthlyMixStorageKey, selectedMonthlyPodIds]);
 
+  useEffect(() => {
+    if (!family) {
+      setPendingPodRequests([]);
+      return;
+    }
+
+    const loadRequests = () => {
+      setPendingPodRequests(podInterestService.getPendingByFamily(family.id));
+    };
+
+    loadRequests();
+    window.addEventListener(POD_INTEREST_REQUESTS_UPDATED_EVENT, loadRequests);
+    return () => window.removeEventListener(POD_INTEREST_REQUESTS_UPDATED_EVENT, loadRequests);
+  }, [family]);
+
   const toggleMonthlyMixPod = (podId: string) => {
     setSelectedMonthlyPodIds((current) => {
       if (current.includes(podId)) {
@@ -283,6 +324,10 @@ export const PodsPage: React.FC = () => {
   };
 
   const handleSelectPod = (pod: Pod) => {
+    if (isLearner) {
+      return;
+    }
+
     const curriculum = curriculumService.getCurriculum(pod.id);
 
     if (selectedMonthlyPodIds.length >= MAX_MONTHLY_PODS && !selectedMonthlyPodIds.includes(pod.id)) {
@@ -398,6 +443,13 @@ export const PodsPage: React.FC = () => {
           );
         });
 
+        podInterestService.resolveMatchingRequests(
+          family.id,
+          selectedPod.id,
+          targetLearners.map((learner) => learner.id),
+          'approved'
+        );
+
         toast.success(
           selectedSupportPodIds.length > 0
             ? `${getPodById(primaryPodId)?.title || selectedPod.title} is now active for ${targetLearners.length} learner${targetLearners.length === 1 ? '' : 's'} with ${selectedSupportPodIds.length} companion pod${selectedSupportPodIds.length === 1 ? '' : 's'}.`
@@ -505,6 +557,10 @@ export const PodsPage: React.FC = () => {
   };
 
   const handleAddSupportPod = async () => {
+    if (isLearner) {
+      return;
+    }
+
     if (!selectedPod || !family?.currentPodId || !family.learners.length) {
       return;
     }
@@ -593,6 +649,51 @@ export const PodsPage: React.FC = () => {
     }
   };
 
+  const handleRequestPod = (pod: Pod) => {
+    if (!family || !currentLearnerId) {
+      return;
+    }
+
+    const learner = family.learners.find((entry) => entry.id === currentLearnerId);
+    if (!learner) {
+      return;
+    }
+
+    const existing = podInterestService.hasPendingRequest(family.id, learner.id, pod.id);
+    if (existing) {
+      toast.message(`Your interest in ${pod.title} is already waiting for parent review.`);
+      return;
+    }
+
+    podInterestService.requestPod({
+      familyId: family.id,
+      learnerId: learner.id,
+      learnerName: learner.name,
+      podId: pod.id,
+      podTitle: pod.title,
+    });
+
+    toast.success(`${pod.title} was sent to your parent for review.`);
+  };
+
+  const handleReviewPodRequest = (request: PodInterestRequest) => {
+    const pod = getPodById(request.podId);
+    if (!pod) {
+      return;
+    }
+
+    const curriculum = curriculumService.getCurriculum(pod.id);
+    setSelectedPod(pod);
+    setPlanningAnswers(podPacingService.getDefaultAnswers(curriculum?.planningQuestions));
+    setSelectedTargetLearnerIds([request.learnerId]);
+    setShowConfirmModal(true);
+  };
+
+  const handleDismissPodRequest = (requestId: string) => {
+    podInterestService.resolveRequest(requestId, 'dismissed');
+    toast.success('Pod request dismissed.');
+  };
+
   // Filter pods
   const filteredPods = ALL_PODS.filter(pod => {
     if (categoryFilter === 'stem' && (pod.theme === 'language' || pod.theme === 'maths' || pod.id.startsWith('pod-'))) return false;
@@ -628,7 +729,44 @@ export const PodsPage: React.FC = () => {
         </header>
 
         {/* Current Pod Banner */}
-        {(activeAssignments.length > 0 || currentPodId) && (
+        {!isLearner && visiblePendingRequests.length > 0 ? (
+          <section className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Send className="h-4 w-4 text-sky-700" />
+              <p className="text-sm font-semibold text-sky-900">Learner Pod Requests</p>
+              <Badge variant="info" size="sm">{visiblePendingRequests.length}</Badge>
+            </div>
+            <div className="space-y-3">
+              {visiblePendingRequests.map((request) => (
+                <div key={request.id} className="flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-white px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">
+                      {request.learnerName} wants to explore {request.podTitle}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Requested {new Date(request.createdAt).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => handleDismissPodRequest(request.id)}>
+                      Dismiss
+                    </Button>
+                    <Button variant="primary" size="sm" onClick={() => handleReviewPodRequest(request)}>
+                      Review
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {((isLearner && visibleAssignments.length > 0) || (!isLearner && (visibleAssignments.length > 0 || currentPodId))) && (
           <m.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -639,24 +777,24 @@ export const PodsPage: React.FC = () => {
                 <Check className="h-5 w-5 text-emerald-600" />
                 <div>
                   <p className="text-sm font-medium text-emerald-900">
-                    {activeAssignments.length > 0
+                    {visibleAssignments.length > 0
                       ? 'Active pod assignments'
                       : `Currently Active: ${ALL_PODS.find((p) => p.id === currentPodId)?.title}`}
                   </p>
                   <p className="text-xs text-emerald-700">
-                    {activeAssignments.length > 0
-                      ? `${activeAssignments.length} learner${activeAssignments.length === 1 ? '' : 's'} currently assigned.${activeSupportPods.length > 0 ? ` Companion pods in rotation: ${activeSupportPods.map((pod) => pod.title).join(', ')}` : ''}`
+                    {visibleAssignments.length > 0
+                      ? `${visibleAssignments.length} learner${visibleAssignments.length === 1 ? '' : 's'} currently assigned.${activeSupportPods.length > 0 ? ` Companion pods in rotation: ${activeSupportPods.map((pod) => pod.title).join(', ')}` : ''}`
                       : `Week ${family?.currentWeek || 1}`}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                {(activeAssignments[0]?.primaryPod || currentPodId) ? (
+                {(visibleAssignments[0]?.primaryPod || currentPodId) ? (
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => {
-                      const activePod = activeAssignments[0]?.primaryPod || ALL_PODS.find((p) => p.id === currentPodId);
+                      const activePod = visibleAssignments[0]?.primaryPod || ALL_PODS.find((p) => p.id === currentPodId);
                       if (activePod) {
                         handleOpenLibrary(activePod);
                       }
@@ -665,7 +803,7 @@ export const PodsPage: React.FC = () => {
                     Open Library
                   </Button>
                 ) : null}
-                {activeAssignments.length > 0 ? (
+                {!isLearner && visibleAssignments.length > 0 ? (
                   <Button
                     variant="secondary"
                     size="sm"
@@ -678,9 +816,9 @@ export const PodsPage: React.FC = () => {
               </div>
             </div>
 
-            {activeAssignments.length > 0 ? (
+            {visibleAssignments.length > 0 ? (
               <div className="grid gap-2 md:grid-cols-2 mt-4">
-                {activeAssignments.map(({ learner, primaryPod, supportPods }) => (
+                {visibleAssignments.map(({ learner, primaryPod, supportPods }) => (
                   <div
                     key={learner.id}
                     className="rounded-xl border border-emerald-200 bg-white/70 px-3 py-3"
@@ -697,14 +835,18 @@ export const PodsPage: React.FC = () => {
                           </p>
                         ) : null}
                       </div>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        icon={<Trash2 className="h-4 w-4" />}
-                        onClick={() => void handleUnassignLearnerPod(learner.id)}
-                      >
-                        Unassign
-                      </Button>
+                      {!isLearner ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={<Trash2 className="h-4 w-4" />}
+                          onClick={() => void handleUnassignLearnerPod(learner.id)}
+                        >
+                          Unassign
+                        </Button>
+                      ) : (
+                        <Badge variant="success" size="sm">Assigned</Badge>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -713,6 +855,7 @@ export const PodsPage: React.FC = () => {
           </m.div>
         )}
 
+        {!isLearner ? (
         <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
@@ -790,6 +933,31 @@ export const PodsPage: React.FC = () => {
             </p>
           )}
         </section>
+        ) : (
+          <section className="mb-6 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="h-5 w-5 text-indigo-700 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-indigo-900">Parent approval required</p>
+                <p className="text-sm text-indigo-700 mt-1">
+                  You can explore pod details and request interest, but only a parent can start or switch pods so the family learning plan stays on track.
+                </p>
+                {visiblePendingRequests.length > 0 ? (
+                  <div className="mt-3 rounded-xl border border-indigo-200 bg-white/80 px-3 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">Pending requests</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {visiblePendingRequests.map((request) => (
+                        <Badge key={request.id} variant="info" size="sm">
+                          {request.podTitle}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Filters */}
         <div className="flex flex-wrap gap-4 mb-6">
@@ -858,8 +1026,17 @@ export const PodsPage: React.FC = () => {
                       isCompanionActive={activeCompanionPodIds.has(pod.id)}
                       isInMonthlyMix={selectedMonthlyPodIds.includes(pod.id)}
                       isMonthlyMixFull={selectedMonthlyPodIds.length >= MAX_MONTHLY_PODS}
+                      isLearnerMode={isLearner}
+                      isRequested={Boolean(
+                        isLearner &&
+                          currentLearnerId &&
+                          visiblePendingRequests.some(
+                            (request) => request.learnerId === currentLearnerId && request.podId === pod.id
+                          )
+                      )}
                       isExpanded={expandedPod === pod.id}
                       onSelect={handleSelectPod}
+                      onRequest={handleRequestPod}
                       onToggleMonthlyMix={toggleMonthlyMixPod}
                       onOpenLibrary={handleOpenLibrary}
                       onToggleExpand={() => setExpandedPod(expandedPod === pod.id ? null : pod.id)}
@@ -883,8 +1060,17 @@ export const PodsPage: React.FC = () => {
                 isCompanionActive={activeCompanionPodIds.has(pod.id)}
                 isInMonthlyMix={selectedMonthlyPodIds.includes(pod.id)}
                 isMonthlyMixFull={selectedMonthlyPodIds.length >= MAX_MONTHLY_PODS}
+                isLearnerMode={isLearner}
+                isRequested={Boolean(
+                  isLearner &&
+                    currentLearnerId &&
+                    visiblePendingRequests.some(
+                      (request) => request.learnerId === currentLearnerId && request.podId === pod.id
+                    )
+                )}
                 isExpanded={expandedPod === pod.id}
                 onSelect={handleSelectPod}
+                onRequest={handleRequestPod}
                 onToggleMonthlyMix={toggleMonthlyMixPod}
                 onOpenLibrary={handleOpenLibrary}
                 onToggleExpand={() => setExpandedPod(expandedPod === pod.id ? null : pod.id)}
@@ -1297,8 +1483,11 @@ interface EnhancedPodCardProps {
   isCompanionActive: boolean;
   isInMonthlyMix: boolean;
   isMonthlyMixFull: boolean;
+  isLearnerMode: boolean;
+  isRequested: boolean;
   isExpanded: boolean;
   onSelect: (pod: Pod) => void;
+  onRequest: (pod: Pod) => void;
   onToggleMonthlyMix: (podId: string) => void;
   onOpenLibrary: (pod: Pod) => void;
   onToggleExpand: () => void;
@@ -1311,8 +1500,11 @@ const EnhancedPodCard: React.FC<EnhancedPodCardProps> = ({
   isCompanionActive,
   isInMonthlyMix,
   isMonthlyMixFull,
+  isLearnerMode,
+  isRequested,
   isExpanded,
   onSelect,
+  onRequest,
   onToggleMonthlyMix,
   onOpenLibrary,
   onToggleExpand,
@@ -1436,20 +1628,22 @@ const EnhancedPodCard: React.FC<EnhancedPodCardProps> = ({
         )}
 
         {/* Action button */}
-        <div className="mb-2">
-          <Button
-            variant={isInMonthlyMix ? 'primary' : 'secondary'}
-            size="sm"
-            className="w-full"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleMonthlyMix(pod.id);
-            }}
-            disabled={isMonthlyMixFull && !isInMonthlyMix}
-          >
-            {isInMonthlyMix ? 'In Monthly Mix' : 'Add to Monthly Mix'}
-          </Button>
-        </div>
+        {!isLearnerMode ? (
+          <div className="mb-2">
+            <Button
+              variant={isInMonthlyMix ? 'primary' : 'secondary'}
+              size="sm"
+              className="w-full"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleMonthlyMix(pod.id);
+              }}
+              disabled={isMonthlyMixFull && !isInMonthlyMix}
+            >
+              {isInMonthlyMix ? 'In Monthly Mix' : 'Add to Monthly Mix'}
+            </Button>
+          </div>
+        ) : null}
         <div className="grid grid-cols-2 gap-2">
           <Button
             variant="secondary"
@@ -1463,15 +1657,35 @@ const EnhancedPodCard: React.FC<EnhancedPodCardProps> = ({
             View Library
           </Button>
           <Button
-            variant={isActive || isCompanionActive ? 'secondary' : 'primary'}
+            variant={isLearnerMode ? (isRequested || isActive || isCompanionActive ? 'secondary' : 'primary') : (isActive || isCompanionActive ? 'secondary' : 'primary')}
             size="sm"
             className="w-full"
             onClick={(e) => {
               e.stopPropagation();
+              if (isLearnerMode) {
+                if (!isRequested && !isActive && !isCompanionActive) {
+                  onRequest(pod);
+                }
+                return;
+              }
+
               if (!isActive) onSelect(pod);
             }}
+            disabled={isLearnerMode && (isRequested || isActive || isCompanionActive)}
           >
-            {isActive ? 'Continue' : isCompanionActive ? 'Manage Pod' : 'Start Pod'}
+            {isLearnerMode
+              ? isActive
+                ? 'Assigned'
+                : isCompanionActive
+                  ? 'Assigned'
+                  : isRequested
+                    ? 'Requested'
+                    : 'Request Pod'
+              : isActive
+                ? 'Continue'
+                : isCompanionActive
+                  ? 'Manage Pod'
+                  : 'Start Pod'}
           </Button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 // Maths Games Page - Interactive math practice with timers and rewards
 import { useState } from 'react';
+import { toast } from 'sonner';
 import {
   Calculator,
   Trophy,
@@ -16,6 +17,10 @@ import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useAuth } from '../auth/AuthContext';
+import { useFamily } from '../family';
+import { learnerPointsLedgerService } from '../../services/learnerPointsLedgerService';
+import { syncLearnerPointsBalance } from '../../services/pointsBalanceService';
 
 // Types
 interface MathScore {
@@ -89,9 +94,13 @@ const MATH_GAMES = [
 ];
 
 export function MathsGamesPage() {
+  const { currentLearnerId } = useAuth();
+  const { family } = useFamily();
   const [scores, setScores] = useLocalStorage<MathScores>('maths-scores', DEFAULT_SCORES);
   const [activeGame, setActiveGame] = useState<GameType | null>(null);
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
+  const activeLearnerId =
+    currentLearnerId || (family?.learners.length === 1 ? family.learners[0]?.id || null : null);
 
   const handleCloseGame = () => {
     setActiveGame(null);
@@ -118,6 +127,50 @@ export function MathsGamesPage() {
         [key]: { ...prev[key], ...newScore, lastPlayed: new Date().toISOString() },
       };
     });
+  };
+
+  const awardMathsGamePoints = async (params: {
+    gameTitle: string;
+    total: number;
+    correct: number;
+    levelUp?: boolean;
+    beatBest?: boolean;
+  }) => {
+    if (!family?.id || !activeLearnerId) {
+      return;
+    }
+
+    const accuracy = params.total > 0 ? params.correct / params.total : 0;
+    const baseBonus = accuracy >= 1 ? 2 : accuracy >= 0.8 ? 1 : 0;
+    let awardedPoints = 0;
+
+    const completionEvent = await learnerPointsLedgerService.award({
+      familyId: family.id,
+      learnerId: activeLearnerId,
+      actionId: 'maths_game_completed',
+      description: `Completed the ${params.gameTitle} maths game.`,
+      pointsOverride: 8 + baseBonus,
+    });
+    if (completionEvent) {
+      awardedPoints += completionEvent.points;
+    }
+
+    if (params.levelUp || params.beatBest) {
+      const masteryEvent = await learnerPointsLedgerService.award({
+        familyId: family.id,
+        learnerId: activeLearnerId,
+        actionId: 'maths_mastery_bonus',
+        description: `${params.levelUp ? 'Levelled up' : 'Beat a personal best'} in ${params.gameTitle}.`,
+      });
+      if (masteryEvent) {
+        awardedPoints += masteryEvent.points;
+      }
+    }
+
+    if (awardedPoints > 0) {
+      await syncLearnerPointsBalance(family.id, activeLearnerId);
+      toast.success(`+${awardedPoints} points for ${params.gameTitle}`);
+    }
   };
 
   return (
@@ -243,6 +296,13 @@ export function MathsGamesPage() {
               correctAnswers: current.correctAnswers + correct,
               level: newLevel,
             });
+            void awardMathsGamePoints({
+              gameTitle: `${selectedTable} Times Table`,
+              correct,
+              total,
+              levelUp: newLevel > current.level,
+              beatBest: current.bestTime > 0 && newBest < current.bestTime,
+            });
           }}
           onClose={() => setSelectedTable(null)}
         />
@@ -253,7 +313,7 @@ export function MathsGamesPage() {
         <RomanNumeralsGame
           currentLevel={scores.romanNumerals.level}
           bestTime={scores.romanNumerals.bestTime}
-          onComplete={(time, correct, _total, newLevel) => {
+          onComplete={(time, correct, total, newLevel) => {
             const current = scores.romanNumerals;
             const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
             updateScore('roman-numerals', null, {
@@ -261,6 +321,13 @@ export function MathsGamesPage() {
               totalAttempts: current.totalAttempts + 1,
               correctAnswers: current.correctAnswers + correct,
               level: newLevel,
+            });
+            void awardMathsGamePoints({
+              gameTitle: 'Roman Numerals',
+              correct,
+              total,
+              levelUp: newLevel > current.level,
+              beatBest: current.bestTime > 0 && newBest < current.bestTime,
             });
           }}
           onClose={handleCloseGame}
@@ -273,7 +340,7 @@ export function MathsGamesPage() {
           type="percent-decimal"
           currentLevel={scores.percentToDecimal.level}
           bestTime={scores.percentToDecimal.bestTime}
-          onComplete={(time, correct, _total, newLevel) => {
+          onComplete={(time, correct, total, newLevel) => {
             const current = scores.percentToDecimal;
             const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
             updateScore('percent-decimal', null, {
@@ -281,6 +348,13 @@ export function MathsGamesPage() {
               totalAttempts: current.totalAttempts + 1,
               correctAnswers: current.correctAnswers + correct,
               level: newLevel,
+            });
+            void awardMathsGamePoints({
+              gameTitle: 'Percent to Decimal',
+              correct,
+              total,
+              levelUp: newLevel > current.level,
+              beatBest: current.bestTime > 0 && newBest < current.bestTime,
             });
           }}
           onClose={handleCloseGame}
@@ -293,7 +367,7 @@ export function MathsGamesPage() {
           type="decimal-percent"
           currentLevel={scores.decimalToPercent.level}
           bestTime={scores.decimalToPercent.bestTime}
-          onComplete={(time, correct, _total, newLevel) => {
+          onComplete={(time, correct, total, newLevel) => {
             const current = scores.decimalToPercent;
             const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
             updateScore('decimal-percent', null, {
@@ -301,6 +375,13 @@ export function MathsGamesPage() {
               totalAttempts: current.totalAttempts + 1,
               correctAnswers: current.correctAnswers + correct,
               level: newLevel,
+            });
+            void awardMathsGamePoints({
+              gameTitle: 'Decimal to Percent',
+              correct,
+              total,
+              levelUp: newLevel > current.level,
+              beatBest: current.bestTime > 0 && newBest < current.bestTime,
             });
           }}
           onClose={handleCloseGame}
@@ -312,7 +393,7 @@ export function MathsGamesPage() {
         <FractionsGame
           currentLevel={scores.fractionConversion.level}
           bestTime={scores.fractionConversion.bestTime}
-          onComplete={(time, correct, _total, newLevel) => {
+          onComplete={(time, correct, total, newLevel) => {
             const current = scores.fractionConversion;
             const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
             updateScore('fractions', null, {
@@ -320,6 +401,13 @@ export function MathsGamesPage() {
               totalAttempts: current.totalAttempts + 1,
               correctAnswers: current.correctAnswers + correct,
               level: newLevel,
+            });
+            void awardMathsGamePoints({
+              gameTitle: 'Fraction Conversions',
+              correct,
+              total,
+              levelUp: newLevel > current.level,
+              beatBest: current.bestTime > 0 && newBest < current.bestTime,
             });
           }}
           onClose={handleCloseGame}

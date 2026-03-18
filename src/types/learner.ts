@@ -8,6 +8,7 @@ export interface LearnerPreferences {
   breakTimeOverride?: number;
   interests?: string[];
   accommodations?: string[];
+  lumiVoice?: string;
 }
 
 export interface Learner {

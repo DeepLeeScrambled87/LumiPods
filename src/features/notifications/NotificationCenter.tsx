@@ -1,33 +1,54 @@
 // Notification Center - Bell icon with dropdown showing notifications
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   getNotifications,
-  getUnreadCount,
   markAsRead,
   markAllAsRead,
   dismissNotification,
   clearAllNotifications,
+  NOTIFICATIONS_UPDATED_EVENT,
   type Notification,
 } from '../../services/notificationService';
+import { useAuth } from '../auth';
+import { useFamily } from '../family';
 
 export const NotificationCenter: React.FC = () => {
+  const { currentLearnerId, isLearner } = useAuth();
+  const { family } = useFamily();
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Load notifications
-  const loadNotifications = () => {
-    setNotifications(getNotifications().filter(n => !n.dismissed));
-    setUnreadCount(getUnreadCount());
-  };
+  const loadNotifications = useCallback(() => {
+    const visibleNotifications = getNotifications().filter((notification) => {
+      if (notification.dismissed) {
+        return false;
+      }
+
+      if (!isLearner) {
+        return true;
+      }
+
+      return !notification.learnerId || notification.learnerId === currentLearnerId;
+    });
+
+    setNotifications(visibleNotifications);
+    setUnreadCount(visibleNotifications.filter((notification) => !notification.read).length);
+  }, [currentLearnerId, isLearner]);
 
   useEffect(() => {
     loadNotifications();
-    // Refresh every 30 seconds
+
+    const handleUpdated = () => loadNotifications();
+    window.addEventListener(NOTIFICATIONS_UPDATED_EVENT, handleUpdated);
     const interval = setInterval(loadNotifications, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_UPDATED_EVENT, handleUpdated);
+      clearInterval(interval);
+    };
+  }, [loadNotifications]);
 
   // Close on outside click
   useEffect(() => {
@@ -118,6 +139,8 @@ export const NotificationCenter: React.FC = () => {
                 <NotificationItem
                   key={notification.id}
                   notification={notification}
+                  learnerName={notification.learnerId ? family?.learners.find((learner) => learner.id === notification.learnerId)?.name : undefined}
+                  showLearnerName={!isLearner}
                   onRead={() => handleMarkAsRead(notification.id)}
                   onDismiss={() => handleDismiss(notification.id)}
                 />
@@ -134,11 +157,19 @@ export const NotificationCenter: React.FC = () => {
 // Individual Notification Item
 interface NotificationItemProps {
   notification: Notification;
+  learnerName?: string;
+  showLearnerName?: boolean;
   onRead: () => void;
   onDismiss: () => void;
 }
 
-const NotificationItem: React.FC<NotificationItemProps> = ({ notification, onRead, onDismiss }) => {
+const NotificationItem: React.FC<NotificationItemProps> = ({
+  notification,
+  learnerName,
+  showLearnerName = false,
+  onRead,
+  onDismiss,
+}) => {
   const timeAgo = formatTimeAgo(new Date(notification.timestamp));
 
   return (
@@ -170,6 +201,11 @@ const NotificationItem: React.FC<NotificationItemProps> = ({ notification, onRea
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5 line-clamp-2">
             {notification.message}
           </p>
+          {showLearnerName && learnerName && (
+            <p className="mt-1 text-xs font-medium text-indigo-600 dark:text-indigo-300">
+              {learnerName}
+            </p>
+          )}
           <div className="flex items-center justify-between mt-2">
             <span className="text-xs text-gray-400">{timeAgo}</span>
             {!notification.read && (

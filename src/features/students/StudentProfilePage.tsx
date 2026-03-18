@@ -6,6 +6,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ProgressBar } from '../../components/ui/ProgressBar';
 import { useFamily } from '../family';
+import { useAuth } from '../auth';
 import type { Learner } from '../../types/learner';
 import type { Artifact } from '../../types/artifact';
 import type { LearnerCompetency } from '../../types/competency';
@@ -649,7 +650,14 @@ const ProgressTab: React.FC<{
 
 export const StudentProfilePage: React.FC = () => {
   const { family } = useFamily();
-  const learners = useMemo(() => family?.learners ?? [], [family?.learners]);
+  const { currentLearnerId, isLearner } = useAuth();
+  const learners = useMemo(
+    () =>
+      isLearner
+        ? (family?.learners ?? []).filter((learner) => learner.id === currentLearnerId)
+        : family?.learners ?? [],
+    [currentLearnerId, family?.learners, isLearner]
+  );
   const [selectedLearnerId, setSelectedLearnerId] = useState('');
   const [activeTab, setActiveTab] = useState<ProfileTab>('overview');
   const [isLoading, setIsLoading] = useState(false);
@@ -694,10 +702,15 @@ export const StudentProfilePage: React.FC = () => {
       return;
     }
 
+    if (isLearner && currentLearnerId) {
+      setSelectedLearnerId(currentLearnerId);
+      return;
+    }
+
     if (!selectedLearnerId || !learners.some((learner) => learner.id === selectedLearnerId)) {
       setSelectedLearnerId(learners[0].id);
     }
-  }, [learners, selectedLearnerId]);
+  }, [currentLearnerId, isLearner, learners, selectedLearnerId]);
 
   useEffect(() => {
     if (!family || !learners.length) {
@@ -748,6 +761,8 @@ export const StudentProfilePage: React.FC = () => {
       setIsLoading(true);
 
       try {
+        await syncLearnerPointsBalance(family.id, selectedLearner.id);
+
         const [nextArtifacts, nextCompetencies, nextStats, nextProjects, nextAchievementStats] = await Promise.all([
           portfolioService.getLearnerPortfolioArtifacts(selectedLearner.id),
           competencyService.getCompetencies(selectedLearner.id),

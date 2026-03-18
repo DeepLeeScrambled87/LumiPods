@@ -40,16 +40,19 @@ import type { Learner } from '../../types/learner';
 import type { SkillLevel } from '../../types/skillLevel';
 import type { FamilySettings } from '../../types/family';
 import { foundationalRailService } from '../../services/foundationalRailService';
+import { learnerPointsLedgerService } from '../../services/learnerPointsLedgerService';
 import {
   checkOllamaAvailability,
   configureLLM,
   configureSpeech,
   getLLMConfig,
   getOllamaModels,
+  OPENAI_VOICE_OPTIONS,
   getSpeechConfig,
   type LLMProvider,
   type SpeechProvider,
 } from '../../services/llmService';
+import { syncLearnerPointsBalance } from '../../services/pointsBalanceService';
 
 type SettingsTab = 'family' | 'learners' | 'schedule' | 'rewards' | 'notifications' | 'appearance' | 'ai';
 
@@ -114,6 +117,9 @@ export const SettingsPage: React.FC = () => {
   const [localTtsVoice, setLocalTtsVoice] = useState(getSpeechConfig().localTtsVoice || 'default');
   const [mathsRailSelections, setMathsRailSelections] = useState<Record<string, string>>({});
   const [railRevision, setRailRevision] = useState(0);
+  const [bonusLearnerId, setBonusLearnerId] = useState('');
+  const [bonusPoints, setBonusPoints] = useState(10);
+  const [bonusNote, setBonusNote] = useState('');
 
   const settings = family?.settings;
   const learners = useMemo(() => family?.learners || [], [family?.learners]);
@@ -138,6 +144,12 @@ export const SettingsPage: React.FC = () => {
 
     setMathsRailSelections(nextSelections);
   }, [family, learners, railRevision]);
+
+  useEffect(() => {
+    if (!bonusLearnerId && learners[0]?.id) {
+      setBonusLearnerId(learners[0].id);
+    }
+  }, [bonusLearnerId, learners]);
 
   useEffect(() => {
     if (activeTab !== 'ai' || llmProvider !== 'ollama') {
@@ -211,6 +223,7 @@ export const SettingsPage: React.FC = () => {
         preferences: {
           ...(editingLearner.preferences || {}),
           interests: (editingLearner.preferences?.interests || []).filter(Boolean),
+          lumiVoice: editingLearner.preferences?.lumiVoice || undefined,
         },
       }));
       toast.success('Learner updated');
@@ -253,6 +266,42 @@ export const SettingsPage: React.FC = () => {
     });
 
     toast.success('AI and voice settings saved');
+  };
+
+  const handleAwardBonusPoints = async () => {
+    if (!family?.id) {
+      return;
+    }
+
+    if (!bonusLearnerId) {
+      toast.error('Choose a learner first');
+      return;
+    }
+
+    const normalizedPoints = Math.max(1, Math.round(Number(bonusPoints) || 0));
+    if (!normalizedPoints) {
+      toast.error('Enter a bonus point amount');
+      return;
+    }
+
+    const learner = learners.find((entry) => entry.id === bonusLearnerId);
+    const event = await learnerPointsLedgerService.award({
+      familyId: family.id,
+      learnerId: bonusLearnerId,
+      actionId: 'parent_bonus',
+      description: bonusNote.trim() || `Parent bonus awarded to ${learner?.name || 'learner'}.`,
+      pointsOverride: normalizedPoints,
+    });
+
+    if (!event) {
+      toast.error('Could not award bonus points');
+      return;
+    }
+
+    await syncLearnerPointsBalance(family.id, bonusLearnerId);
+    toast.success(`Awarded ${normalizedPoints} bonus points to ${learner?.name || 'learner'}`);
+    setBonusNote('');
+    setBonusPoints(10);
   };
 
   const handleAssignMathsRail = (learnerId: string) => {
@@ -719,6 +768,52 @@ export const SettingsPage: React.FC = () => {
                       Manage Custom Rewards
                     </Button>
                   </div>
+
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <div className="mb-3">
+                      <h3 className="font-medium text-amber-900">Parent Bonus Points</h3>
+                      <p className="text-sm text-amber-700 mt-1">
+                        Award extra points for exceptional effort, kindness, improvement, or standout work.
+                      </p>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                      <Select
+                        value={bonusLearnerId}
+                        onChange={(e) => setBonusLearnerId(e.target.value)}
+                        options={learners.map((learner) => ({
+                          value: learner.id,
+                          label: learner.name,
+                        }))}
+                      />
+                      <Input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={String(bonusPoints)}
+                        onChange={(e) => setBonusPoints(Number(e.target.value))}
+                        placeholder="10"
+                        label="Points"
+                      />
+                    </div>
+
+                    <div className="mt-3 flex flex-col gap-3 md:flex-row">
+                      <Input
+                        value={bonusNote}
+                        onChange={(e) => setBonusNote(e.target.value)}
+                        placeholder="Why are you awarding this bonus?"
+                        hint="Optional note shown in the point event history."
+                      />
+                      <Button
+                        variant="primary"
+                        icon={<Gift className="h-4 w-4" />}
+                        onClick={() => void handleAwardBonusPoints()}
+                        className="md:self-start"
+                      >
+                        Award Bonus
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </Card>
             )}
@@ -981,17 +1076,10 @@ export const SettingsPage: React.FC = () => {
                           <Select
                             value={openaiVoice}
                             onChange={(e) => setOpenaiVoice(e.target.value)}
-                            options={[
-                              { value: 'alloy', label: 'Alloy' },
-                              { value: 'ash', label: 'Ash' },
-                              { value: 'coral', label: 'Coral' },
-                              { value: 'echo', label: 'Echo' },
-                              { value: 'fable', label: 'Fable' },
-                              { value: 'nova', label: 'Nova' },
-                              { value: 'onyx', label: 'Onyx' },
-                              { value: 'sage', label: 'Sage' },
-                              { value: 'shimmer', label: 'Shimmer' },
-                            ]}
+                            options={OPENAI_VOICE_OPTIONS.map((voice) => ({
+                              value: voice.value,
+                              label: voice.label,
+                            }))}
                           />
                           <Input
                             label="OpenAI TTS model"
@@ -1226,6 +1314,32 @@ export const SettingsPage: React.FC = () => {
                 placeholder="soccer, drawing, space"
                 hint="Comma-separated interests used to personalize projects and explanations."
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Lumi Voice</label>
+              <Select
+                value={editingLearner.preferences?.lumiVoice || ''}
+                onChange={(e) =>
+                  setEditingLearner({
+                    ...editingLearner,
+                    preferences: {
+                      ...(editingLearner.preferences || {}),
+                      lumiVoice: e.target.value || undefined,
+                    },
+                  })
+                }
+                options={[
+                  { value: '', label: 'Use family default voice' },
+                  ...OPENAI_VOICE_OPTIONS.map((voice) => ({
+                    value: voice.value,
+                    label: voice.label,
+                  })),
+                ]}
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Saved on the learner profile so Lumi can keep a preferred voice for this account.
+              </p>
             </div>
 
             <ModalFooter>

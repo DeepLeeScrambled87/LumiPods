@@ -23,12 +23,15 @@ import { useFamily } from '../family';
 import { useAuth } from '../auth/AuthContext';
 import { getPodById } from '../../data/pods';
 import { getCurrentMonthPod, getNextPod } from '../../data/yearlyPods';
-import { formatDate, getDayName } from '../../lib/dates';
+import { formatDate, formatTime, getDayName, toLocalDateKey } from '../../lib/dates';
 import { resolveLearnerBanner } from '../../lib/learnerAvatars';
 import { finalizeBlockCompletion } from '../../services/blockCompletionService';
 import { launchTrackedExternalSession } from '../../services/externalProgressSyncService';
 import { foundationalRailService } from '../../services/foundationalRailService';
+import { learnerPointsLedgerService } from '../../services/learnerPointsLedgerService';
 import { planningRuleDataService } from '../../services/learningRecordsService';
+import { announceLearnerPointsAward } from '../../services/pointsFeedbackService';
+import { syncLearnerPointsBalance } from '../../services/pointsBalanceService';
 import { scheduleService } from '../../services/scheduleService';
 import { syncScheduleProgress } from '../../services/scheduleProgressSync';
 import type { BlockCompletionDetails, DailySchedule, ScheduleBlock } from '../../types/schedule';
@@ -56,6 +59,22 @@ const toDisplayTime = (time: string): string =>
     minute: '2-digit',
     hour12: true,
   });
+
+const ON_TIME_START_TOLERANCE_MINUTES = 5;
+
+const isOnTimeStart = (date: string, startTime?: string, now: Date = new Date()): boolean => {
+  if (!startTime) {
+    return false;
+  }
+
+  const scheduled = new Date(`${date}T${startTime}:00`);
+  if (Number.isNaN(scheduled.getTime())) {
+    return false;
+  }
+
+  const deltaMinutes = Math.abs(now.getTime() - scheduled.getTime()) / 60000;
+  return deltaMinutes <= ON_TIME_START_TOLERANCE_MINUTES;
+};
 
 const getCompletionPercentage = (schedule: DailySchedule | null): number => {
   if (!schedule) return 0;
@@ -97,8 +116,9 @@ export const DashboardPage: React.FC = () => {
   const { family } = useFamily();
   const { isLearner, currentLearnerId } = useAuth();
   const learners = useMemo(() => family?.learners ?? [], [family?.learners]);
-  const today = new Date();
-  const dateKey = today.toISOString().split('T')[0];
+  const [localNow, setLocalNow] = useState(() => new Date());
+  const today = localNow;
+  const dateKey = toLocalDateKey(localNow);
   const currentPod = getCurrentMonthPod();
   const nextPod = getNextPod();
 
@@ -110,6 +130,16 @@ export const DashboardPage: React.FC = () => {
   const [selectedBlock, setSelectedBlock] = useState<ScheduleBlock | null>(null);
   const [showBlockDetails, setShowBlockDetails] = useState(false);
   const [timerNow, setTimerNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setLocalNow(new Date());
+    }, 60000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
 
   const selectedLearner = learners.find((learner) => learner.id === selectedLearnerId) || learners[0] || null;
   const selectedLearnerRule =
@@ -271,6 +301,17 @@ export const DashboardPage: React.FC = () => {
       ? scheduleService.resumeBlock(selectedLearner.id, dateKey, block.id)
       : scheduleService.startBlock(selectedLearner.id, dateKey, block.id);
     if (updated) {
+      if (family && currentBlock?.status !== 'rescheduled' && isOnTimeStart(dateKey, updated.startTime)) {
+        await learnerPointsLedgerService.award({
+          familyId: family.id,
+          learnerId: selectedLearner.id,
+          actionId: 'on_time_start',
+          description: `Started "${updated.title}" on time.`,
+          sourceKey: `on-time:${selectedLearner.id}:${dateKey}:${updated.id}`,
+        });
+        await syncLearnerPointsBalance(family.id, selectedLearner.id);
+      }
+
       loadSelectedSchedule();
       toast.success(`Started "${updated.title}"`);
     }
@@ -299,6 +340,17 @@ export const DashboardPage: React.FC = () => {
     const nextSchedule = loadSelectedSchedule();
     if (nextSchedule) {
       await syncScheduleProgress(nextSchedule);
+    }
+
+    if (family && updated.type !== 'break') {
+      announceLearnerPointsAward({
+        familyId: family.id,
+        learnerId: selectedLearner.id,
+        points: 10,
+        label: 'Session Complete',
+        description: updated.title,
+        timestamp: updated.completedAt || new Date().toISOString(),
+      });
     }
 
     toast.success('Block completed');
@@ -432,6 +484,7 @@ export const DashboardPage: React.FC = () => {
                   <div className="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur-sm">
                     <p className="text-xs uppercase tracking-[0.18em] text-white/70">Today</p>
                     <p className="mt-2 text-lg font-semibold">{formatDate(today, 'MMMM d, yyyy')}</p>
+                    <p className="mt-1 text-sm text-white/75">Local time {formatTime(today)}</p>
                   </div>
                   <div className="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur-sm">
                     <p className="text-xs uppercase tracking-[0.18em] text-white/70">Active Pod</p>
@@ -455,6 +508,7 @@ export const DashboardPage: React.FC = () => {
                 <h1 className="text-2xl font-semibold text-slate-900">
                   {formatDate(today, 'MMMM d, yyyy')}
                 </h1>
+                <p className="mt-1 text-sm text-slate-500">Local time {formatTime(today)}</p>
               </div>
               <div className="text-right">
                 <p className="text-sm text-slate-500">Today's Progress</p>
@@ -904,6 +958,17 @@ export const DashboardPage: React.FC = () => {
           }}
           onAddNote={(note) => {
             scheduleService.addNoteToBlock(selectedLearner.id, dateKey, selectedBlock.id, note);
+            if (family) {
+              void learnerPointsLedgerService
+                .award({
+                  familyId: family.id,
+                  learnerId: selectedLearner.id,
+                  actionId: 'session_note_added',
+                  blockId: selectedBlock.id,
+                  description: `Added a note for "${selectedBlock.title}".`,
+                })
+                .then(() => syncLearnerPointsBalance(family.id, selectedLearner.id));
+            }
             loadSelectedSchedule();
             const nextSelectedBlock = scheduleService
               .getDailySchedule(selectedLearner.id, dateKey)

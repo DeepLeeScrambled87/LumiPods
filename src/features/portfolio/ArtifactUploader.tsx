@@ -6,6 +6,7 @@ import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Modal, ModalFooter } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
+import { toLocalDateKey } from '../../lib/dates';
 import { formatLearnerAvatarLabel } from '../../lib/learnerAvatars';
 import { ARTIFACT_TYPE_CONFIG } from '../../types/artifact';
 import { COMPETENCY_DOMAINS } from '../../types/competency';
@@ -95,7 +96,7 @@ export const ArtifactUploader: React.FC<ArtifactUploaderProps> = ({
     competencies: [],
     visibility: 'family',
     tags: [],
-    createdDate: new Date().toISOString().split('T')[0], // Default to today
+    createdDate: toLocalDateKey(), // Default to today
   });
   const [tagInput, setTagInput] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -128,7 +129,7 @@ export const ArtifactUploader: React.FC<ArtifactUploaderProps> = ({
       competencies: initialData?.competencies || [],
       visibility: initialData?.visibility || 'family',
       tags: initialData?.tags || [],
-      createdDate: initialData?.createdDate || new Date().toISOString().split('T')[0],
+      createdDate: initialData?.createdDate || toLocalDateKey(),
       url: initialData?.url,
       file: undefined,
     });
@@ -489,7 +490,7 @@ export const ArtifactUploader: React.FC<ArtifactUploaderProps> = ({
             type="date"
             value={formData.createdDate}
             onChange={(e) => setFormData({ ...formData, createdDate: e.target.value })}
-            max={new Date().toISOString().split('T')[0]}
+            max={toLocalDateKey()}
             className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
           />
         </div>

@@ -30,6 +30,12 @@ import { SyncStatus } from '../../components/ui/SyncStatus';
 import { useFamily } from '../../features/family';
 import { useAuth } from '../../features/auth';
 import { NotificationCenter } from '../../features/notifications';
+import { LEARNER_POINTS_AWARDED_EVENT, type LearnerPointsAwardDetail } from '../../services/pointsFeedbackService';
+import {
+  LEARNER_POINTS_UPDATED_EVENT,
+  getLearnerRollingPointsSummary,
+  type LearnerRollingPointsSummary,
+} from '../../services/pointsBalanceService';
 
 export type PageId =
   | 'dashboard'
@@ -135,9 +141,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   onPageChange,
 }) => {
   const { family } = useFamily();
-  const { logout } = useAuth();
+  const { logout, currentLearnerId, isLearner } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [pointBursts, setPointBursts] = useState<Array<LearnerPointsAwardDetail & { id: string }>>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -151,11 +158,47 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handlePointsAwarded = (event: Event) => {
+      const detail = (event as CustomEvent<LearnerPointsAwardDetail>).detail;
+      if (!detail || !family || detail.familyId !== family.id) {
+        return;
+      }
+
+      if (isLearner && detail.learnerId !== currentLearnerId) {
+        return;
+      }
+
+      const id = `${detail.learnerId}-${detail.timestamp}-${Math.random().toString(36).slice(2, 7)}`;
+      setPointBursts((current) => [...current, { ...detail, id }].slice(-3));
+      window.setTimeout(() => {
+        setPointBursts((current) => current.filter((burst) => burst.id !== id));
+      }, 2400);
+    };
+
+    window.addEventListener(LEARNER_POINTS_AWARDED_EVENT, handlePointsAwarded);
+    return () => {
+      window.removeEventListener(LEARNER_POINTS_AWARDED_EVENT, handlePointsAwarded);
+    };
+  }, [currentLearnerId, family, isLearner]);
+
   const handleNavClick = (pageId: PageId) => {
     onPageChange(pageId);
     setDropdownOpen(false);
     setMobileMenuOpen(false);
   };
+
+  const currentLearner = currentLearnerId
+    ? family?.learners.find((learner) => learner.id === currentLearnerId) || null
+    : null;
+  const headerPoints = isLearner
+    ? currentLearner?.points || 0
+    : (family?.learners || []).reduce((sum, learner) => sum + (learner.points || 0), 0);
+  const headerPointsLabel = isLearner ? 'My Points' : 'Family Points';
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -263,6 +306,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
 
             {/* Right side */}
             <div className="flex items-center gap-2">
+              <div className="hidden md:flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-700">
+                <Trophy className="h-4 w-4" />
+                <span className="text-[11px] font-medium uppercase tracking-wide">{headerPointsLabel}</span>
+                <span className="text-sm font-bold">{headerPoints}</span>
+              </div>
+
               {/* Sync Status */}
               <div className="hidden md:block">
                 <SyncStatus />
@@ -373,6 +422,29 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
         </AnimatePresence>
       </header>
 
+      <AnimatePresence>
+        {pointBursts.length > 0 && (
+          <div className="pointer-events-none fixed right-6 top-20 z-50 flex flex-col items-end gap-2">
+            {pointBursts.map((burst) => (
+              <m.div
+                key={burst.id}
+                initial={{ opacity: 0, y: 12, scale: 0.92 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -16, scale: 0.95 }}
+                className="rounded-2xl border border-amber-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur"
+              >
+                <div className="flex items-center gap-2 text-amber-700">
+                  <Trophy className="h-4 w-4" />
+                  <span className="text-lg font-bold">+{burst.points}</span>
+                  <span className="text-sm font-semibold">{burst.label}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600">{burst.description}</p>
+              </m.div>
+            ))}
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Main Content */}
       <main>
         <AnimatePresence mode="wait">
@@ -407,8 +479,83 @@ export const LearnerLayout: React.FC<LearnerLayoutProps> = ({
   learnerName,
   learnerAvatar,
 }) => {
-  const { logout } = useAuth();
+  const { logout, currentLearnerId } = useAuth();
+  const { family } = useFamily();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [pointBursts, setPointBursts] = useState<Array<LearnerPointsAwardDetail & { id: string }>>([]);
+  const [pointsSummaryOpen, setPointsSummaryOpen] = useState(false);
+  const [pointsSummary, setPointsSummary] = useState<LearnerRollingPointsSummary | null>(null);
+  const pointsSummaryRef = useRef<HTMLDivElement>(null);
+
+  const currentLearnerPoints =
+    (pointsSummary?.overall ??
+      family?.learners.find((learner) => learner.id === currentLearnerId)?.points) ||
+    0;
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (pointsSummaryRef.current && !pointsSummaryRef.current.contains(event.target as Node)) {
+        setPointsSummaryOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !family || !currentLearnerId) {
+      return;
+    }
+
+    const handlePointsAwarded = (event: Event) => {
+      const detail = (event as CustomEvent<LearnerPointsAwardDetail>).detail;
+      if (!detail || detail.familyId !== family.id || detail.learnerId !== currentLearnerId) {
+        return;
+      }
+
+      const id = `${detail.learnerId}-${detail.timestamp}-${Math.random().toString(36).slice(2, 7)}`;
+      setPointBursts((current) => [...current, { ...detail, id }].slice(-3));
+      window.setTimeout(() => {
+        setPointBursts((current) => current.filter((burst) => burst.id !== id));
+      }, 2400);
+    };
+
+    window.addEventListener(LEARNER_POINTS_AWARDED_EVENT, handlePointsAwarded);
+    return () => {
+      window.removeEventListener(LEARNER_POINTS_AWARDED_EVENT, handlePointsAwarded);
+    };
+  }, [currentLearnerId, family]);
+
+  useEffect(() => {
+    if (!family || !currentLearnerId) {
+      setPointsSummary(null);
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadSummary = async () => {
+      const summary = await getLearnerRollingPointsSummary(family.id, currentLearnerId);
+      if (isMounted) {
+        setPointsSummary(summary);
+      }
+    };
+
+    void loadSummary();
+
+    const reload = () => {
+      void loadSummary();
+    };
+
+    window.addEventListener(LEARNER_POINTS_UPDATED_EVENT, reload);
+    window.addEventListener(LEARNER_POINTS_AWARDED_EVENT, reload);
+    return () => {
+      isMounted = false;
+      window.removeEventListener(LEARNER_POINTS_UPDATED_EVENT, reload);
+      window.removeEventListener(LEARNER_POINTS_AWARDED_EVENT, reload);
+    };
+  }, [currentLearnerId, family]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white">
@@ -447,6 +594,50 @@ export const LearnerLayout: React.FC<LearnerLayoutProps> = ({
 
             {/* Right side */}
             <div className="flex items-center gap-3">
+              <div className="relative hidden sm:block" ref={pointsSummaryRef}>
+                <button
+                  type="button"
+                  onClick={() => setPointsSummaryOpen((current) => !current)}
+                  className="flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-700 transition-colors hover:bg-amber-100"
+                >
+                  <Trophy className="h-4 w-4" />
+                  <span className="text-sm font-bold">{currentLearnerPoints}</span>
+                </button>
+
+                <AnimatePresence>
+                  {pointsSummaryOpen && pointsSummary && (
+                    <m.div
+                      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      className="absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl border border-amber-200 bg-white p-4 shadow-xl"
+                    >
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <Trophy className="h-4 w-4" />
+                        <p className="text-sm font-semibold">My Points</p>
+                      </div>
+                      <div className="mt-3 space-y-2 text-sm">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Today</span>
+                          <span className="font-semibold text-slate-900">{pointsSummary.today}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>This week</span>
+                          <span className="font-semibold text-slate-900">{pointsSummary.week}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>This month</span>
+                          <span className="font-semibold text-slate-900">{pointsSummary.month}</span>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-slate-700">
+                          <span>Overall</span>
+                          <span className="text-base font-bold text-amber-700">{pointsSummary.overall}</span>
+                        </div>
+                      </div>
+                    </m.div>
+                  )}
+                </AnimatePresence>
+              </div>
               <div className="flex items-center gap-2">
                 <Avatar emoji={learnerAvatar} size="sm" />
                 <span className="text-sm font-medium text-slate-900 hidden sm:block">{learnerName}</span>
@@ -510,6 +701,29 @@ export const LearnerLayout: React.FC<LearnerLayoutProps> = ({
           )}
         </AnimatePresence>
       </header>
+
+      <AnimatePresence>
+        {pointBursts.length > 0 && (
+          <div className="pointer-events-none fixed right-6 top-20 z-50 flex flex-col items-end gap-2">
+            {pointBursts.map((burst) => (
+              <m.div
+                key={burst.id}
+                initial={{ opacity: 0, y: 12, scale: 0.92 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -16, scale: 0.95 }}
+                className="rounded-2xl border border-amber-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur"
+              >
+                <div className="flex items-center gap-2 text-amber-700">
+                  <Trophy className="h-4 w-4" />
+                  <span className="text-lg font-bold">+{burst.points}</span>
+                  <span className="text-sm font-semibold">{burst.label}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600">{burst.description}</p>
+              </m.div>
+            ))}
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Main Content */}
       <main>

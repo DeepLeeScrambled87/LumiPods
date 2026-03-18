@@ -11,6 +11,11 @@ export const formatTime = (date: Date | string): string => {
   return format(d, 'h:mm a');
 };
 
+export const toLocalDateKey = (date: Date | string = new Date()): string => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return format(d, 'yyyy-MM-dd');
+};
+
 export const formatRelative = (date: Date | string): string => {
   const d = typeof date === 'string' ? new Date(date) : date;
   return formatDistanceToNow(d, { addSuffix: true });

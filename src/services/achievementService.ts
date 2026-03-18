@@ -12,7 +12,12 @@ import {
   reflectionEntryDataService,
 } from './learningRecordsService';
 import { notifyAchievement } from './notificationService';
-import { syncLearnerPointsBalance } from './pointsBalanceService';
+import { announceLearnerPointsAward } from './pointsFeedbackService';
+import { calculateLearnerPointsBreakdown, syncLearnerPointsBalance } from './pointsBalanceService';
+import { isLearnerPortfolioArtifact } from '../lib/artifactScope';
+
+const pendingUnlockKeys = new Set<string>();
+const pendingCheckKeys = new Map<string, Promise<Achievement[]>>();
 
 export const achievementService = {
   async getUnlocked(familyId: string, learnerId: string): Promise<UnlockedAchievement[]> {
@@ -32,6 +37,11 @@ export const achievementService = {
     achievementId: string,
     sourceType: 'progress' | 'artifact' | 'project' | 'reflection' | 'external-session' | 'manual' = 'progress'
   ): Promise<boolean> {
+    const unlockKey = `${familyId}:${learnerId}:${achievementId}`;
+    if (pendingUnlockKeys.has(unlockKey)) {
+      return false;
+    }
+
     const achievement = ACHIEVEMENTS.find((entry) => entry.id === achievementId);
     if (!achievement) {
       return false;
@@ -42,29 +52,45 @@ export const achievementService = {
       return false;
     }
 
-    await achievementUnlockDataService.unlock({
-      id: `achievement-unlock-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      familyId,
-      learnerId,
-      achievementId,
-      unlockedAt: new Date().toISOString(),
-      sourceType,
-      pointsAwarded: achievement.points,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    pendingUnlockKeys.add(unlockKey);
+    try {
+      await achievementUnlockDataService.unlock({
+        id: `achievement-unlock-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        familyId,
+        learnerId,
+        achievementId,
+        unlockedAt: new Date().toISOString(),
+        sourceType,
+        pointsAwarded: achievement.points,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
 
-    notifyAchievement(achievement.title, achievement.points, learnerId);
-    return true;
+      notifyAchievement(achievement.title, achievement.points, learnerId);
+      if (achievement.points > 0) {
+        announceLearnerPointsAward({
+          familyId,
+          learnerId,
+          points: achievement.points,
+          label: 'Achievement Unlocked',
+          description: `${achievement.title} unlocked`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      return true;
+    } finally {
+      pendingUnlockKeys.delete(unlockKey);
+    }
   },
 
   async getStats(familyId: string, learnerId: string): Promise<LearnerStats> {
-    const [progress, artifacts, projects, reflections, externalSessions] = await Promise.all([
+    const [progress, artifacts, projects, reflections, externalSessions, pointsBreakdown] = await Promise.all([
       progressDataService.getForLearner(familyId, learnerId, 180),
       artifactDataService.getByLearner(learnerId),
       projectDataService.getByLearner(learnerId),
       reflectionEntryDataService.getByLearner(learnerId),
       externalActivitySessionDataService.getByLearner(learnerId),
+      calculateLearnerPointsBreakdown(familyId, learnerId),
     ]);
 
     return {
@@ -72,8 +98,8 @@ export const achievementService = {
       blocksCompleted: progress.reduce((sum, entry) => sum + (entry.blocksCompleted || 0), 0),
       focusMinutes: progress.reduce((sum, entry) => sum + (entry.totalFocusMinutes || 0), 0),
       podsCompleted: countCompletedPods(progress),
-      artifactsCreated: artifacts.length,
-      totalPoints: progress.reduce((sum, entry) => sum + (entry.pointsEarned || 0), 0),
+      artifactsCreated: artifacts.filter(isLearnerPortfolioArtifact).length,
+      totalPoints: pointsBreakdown.totalPoints,
       projectsCompleted: projects.filter((project) => project.status === 'completed').length,
       reflectionsLogged: reflections.length,
       externalSessionsCompleted: externalSessions.filter((session) => session.status === 'completed').length,
@@ -81,6 +107,13 @@ export const achievementService = {
   },
 
   async checkAndUnlock(familyId: string, learnerId: string): Promise<Achievement[]> {
+    const checkKey = `${familyId}:${learnerId}`;
+    const existingCheck = pendingCheckKeys.get(checkKey);
+    if (existingCheck) {
+      return existingCheck;
+    }
+
+    const checkPromise = (async () => {
     const stats = await this.getStats(familyId, learnerId);
     const unlocked = await this.getUnlocked(familyId, learnerId);
     const unlockedIds = new Set(unlocked.map((entry) => entry.achievementId));
@@ -114,6 +147,14 @@ export const achievementService = {
 
     await syncLearnerPointsBalance(familyId, learnerId);
     return newlyUnlocked;
+    })();
+
+    pendingCheckKeys.set(checkKey, checkPromise);
+    try {
+      return await checkPromise;
+    } finally {
+      pendingCheckKeys.delete(checkKey);
+    }
   },
 
   getProgress(achievement: Achievement, stats: LearnerStats): number {

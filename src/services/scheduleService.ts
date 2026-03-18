@@ -602,7 +602,8 @@ export const scheduleService = {
 
     const block = schedule.blocks[blockIndex];
     const totalSeconds = block.timerInitialSeconds ?? block.duration * 60;
-    const remainingSeconds = block.timerRemainingSeconds ?? totalSeconds;
+    const storedRemainingSeconds = block.timerRemainingSeconds ?? totalSeconds;
+    const remainingSeconds = storedRemainingSeconds > 0 ? storedRemainingSeconds : totalSeconds;
     const updatedBlock: ScheduleBlock = {
       ...block,
       status: 'in-progress',
@@ -644,15 +645,20 @@ export const scheduleService = {
     const blockIndex = schedule.blocks.findIndex((block) => block.id === blockId);
     if (blockIndex === -1) return null;
 
+    const storedRemainingSeconds =
+      schedule.blocks[blockIndex].timerRemainingSeconds ??
+      schedule.blocks[blockIndex].timerInitialSeconds ??
+      schedule.blocks[blockIndex].duration * 60;
+
     const updatedBlock: ScheduleBlock = {
       ...schedule.blocks[blockIndex],
       status: 'in-progress',
       suggestedTime: undefined,
       timerInitialSeconds: schedule.blocks[blockIndex].timerInitialSeconds ?? schedule.blocks[blockIndex].duration * 60,
       timerRemainingSeconds:
-        schedule.blocks[blockIndex].timerRemainingSeconds ??
-        schedule.blocks[blockIndex].timerInitialSeconds ??
-        schedule.blocks[blockIndex].duration * 60,
+        storedRemainingSeconds > 0
+          ? storedRemainingSeconds
+          : schedule.blocks[blockIndex].timerInitialSeconds ?? schedule.blocks[blockIndex].duration * 60,
       timerStartedAt: new Date().toISOString(),
     };
 

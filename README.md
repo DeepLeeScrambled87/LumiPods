@@ -62,6 +62,38 @@ If Lumi still answers in demo mode after health is green:
 
 AI runtime settings are stored in browser storage, so an older saved `mock` or `ollama` choice will override the `.env` defaults until you change it there.
 
+## Appwrite Migration
+
+Appwrite is now the target production backend. The frontend can still run against PocketBase locally while the migration is in progress.
+
+Useful commands:
+
+```bash
+# Check the Appwrite target and PocketBase source before migrating
+npm run appwrite:preflight
+
+# Generate a dry-run migration report without writing any Appwrite documents/files
+npm run appwrite:migrate:dry
+
+# Run the actual PocketBase -> Appwrite migration
+npm run appwrite:migrate
+```
+
+The migration scripts expect these env vars in `.env`:
+
+```env
+APPWRITE_ENDPOINT=
+APPWRITE_PROJECT_ID=
+APPWRITE_API_KEY=
+APPWRITE_DATABASE_ID=lumipods
+APPWRITE_BUCKET_ID=learner-artifacts
+APPWRITE_BUCKET_MAX_FILE_SIZE=52428800
+
+POCKETBASE_CONTAINER=lumipods-pocketbase
+POCKETBASE_DATA_DB_PATH=/pb_data/data.db
+POCKETBASE_STORAGE_ROOT=/pb_data/storage
+```
+
 ## Deployment
 
 ### Environment Variables
@@ -69,6 +101,7 @@ AI runtime settings are stored in browser storage, so an older saved `mock` or `
 Create a `.env` file for production:
 
 ```env
+# Frontend runtime
 VITE_POCKETBASE_URL=https://your-pocketbase-instance.com
 VITE_LLM_PROVIDER=openai
 VITE_SPEECH_PROVIDER=openai
@@ -83,6 +116,14 @@ For production-safe OpenAI usage, keep the real `OPENAI_API_KEY` on the server-s
 ```env
 OPENAI_API_KEY=sk-...
 OPENAI_BASE_URL=https://api.openai.com
+
+# Appwrite deployment and migration
+APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
+APPWRITE_PROJECT_ID=
+APPWRITE_API_KEY=
+APPWRITE_DATABASE_ID=lumipods
+APPWRITE_BUCKET_ID=learner-artifacts
+APPWRITE_BUCKET_MAX_FILE_SIZE=52428800
 ```
 
 ### Docker Deployment

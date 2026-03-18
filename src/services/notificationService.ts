@@ -1,6 +1,8 @@
 // Notification Service - Reminders for VR sessions, French practice, activities
 import { storage } from '../lib/storage';
 
+export const NOTIFICATIONS_UPDATED_EVENT = 'lumipods:notifications-updated';
+
 export type NotificationType = 'vr-session' | 'french-practice' | 'activity' | 'streak' | 'achievement' | 'reminder';
 
 export interface Notification {
@@ -40,6 +42,14 @@ const DEFAULT_SETTINGS: NotificationSettings = {
   reminderMinutesBefore: 15,
 };
 
+const dispatchNotificationsUpdated = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent(NOTIFICATIONS_UPDATED_EVENT));
+};
+
 // Get all notifications
 export const getNotifications = (): Notification[] => {
   return storage.get<Notification[]>(NOTIFICATIONS_KEY, []);
@@ -57,6 +67,20 @@ export const addNotification = (
   message: string,
   options?: Partial<Notification>
 ): Notification => {
+  const existing = getNotifications().find(
+    (notification) =>
+      notification.type === type &&
+      notification.title === title &&
+      notification.message === message &&
+      notification.learnerId === options?.learnerId &&
+      !notification.dismissed &&
+      Date.now() - new Date(notification.timestamp).getTime() < 1000 * 60 * 60 * 12
+  );
+
+  if (existing) {
+    return existing;
+  }
+
   const notification: Notification = {
     id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     type,
@@ -73,6 +97,7 @@ export const addNotification = (
   
   // Keep only last 50 notifications
   storage.set(NOTIFICATIONS_KEY, notifications.slice(0, 50));
+  dispatchNotificationsUpdated();
 
   // Show browser notification if enabled
   showBrowserNotification(notification);
@@ -87,6 +112,7 @@ export const markAsRead = (notificationId: string): void => {
   if (index >= 0) {
     notifications[index].read = true;
     storage.set(NOTIFICATIONS_KEY, notifications);
+    dispatchNotificationsUpdated();
   }
 };
 
@@ -94,6 +120,7 @@ export const markAsRead = (notificationId: string): void => {
 export const markAllAsRead = (): void => {
   const notifications = getNotifications().map(n => ({ ...n, read: true }));
   storage.set(NOTIFICATIONS_KEY, notifications);
+  dispatchNotificationsUpdated();
 };
 
 // Dismiss notification
@@ -103,12 +130,14 @@ export const dismissNotification = (notificationId: string): void => {
   if (index >= 0) {
     notifications[index].dismissed = true;
     storage.set(NOTIFICATIONS_KEY, notifications);
+    dispatchNotificationsUpdated();
   }
 };
 
 // Clear all notifications
 export const clearAllNotifications = (): void => {
   storage.set(NOTIFICATIONS_KEY, []);
+  dispatchNotificationsUpdated();
 };
 
 // Get notification settings

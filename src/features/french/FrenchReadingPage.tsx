@@ -1,6 +1,7 @@
 // French Reading Games - Syllable-based phonics learning
 // Unlike English CVC, French uses CV syllables as building blocks
 import { useState } from 'react';
+import { toast } from 'sonner';
 import {
   BookOpen,
   Trophy,
@@ -17,6 +18,10 @@ import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useAuth } from '../auth/AuthContext';
+import { useFamily } from '../family';
+import { learnerPointsLedgerService } from '../../services/learnerPointsLedgerService';
+import { syncLearnerPointsBalance } from '../../services/pointsBalanceService';
 
 // Helper functions
 function shuffleArray<T>(array: T[]): T[] {
@@ -249,8 +254,12 @@ const GRAMMAR_GAMES = [
 ];
 
 export function FrenchReadingPage() {
+  const { currentLearnerId } = useAuth();
+  const { family } = useFamily();
   const [scores, setScores] = useLocalStorage<FrenchScores>('french-scores', DEFAULT_SCORES);
   const [activeGame, setActiveGame] = useState<GameType | null>(null);
+  const activeLearnerId =
+    currentLearnerId || (family?.learners.length === 1 ? family.learners[0]?.id || null : null);
 
   const handleCloseGame = () => setActiveGame(null);
 
@@ -282,6 +291,104 @@ export function FrenchReadingPage() {
       'pronouns': 'pronouns', 'conjunctions': 'conjunctions',
     };
     return scores[keyMap[gameType]];
+  };
+
+  const handleFrenchGameCompletion = (
+    gameType: GameType,
+    gameTitle: string,
+    wordsLearned: number,
+    correct: number,
+    total: number,
+    time: number,
+    options?: {
+      alwaysLevelUp?: boolean;
+      accuracyThreshold?: number;
+    }
+  ) => {
+    const current = getScoreForGame(gameType);
+    const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
+    const nextLevel =
+      options?.alwaysLevelUp
+        ? Math.min(current.level + 1, 5)
+        : correct >= total * (options?.accuracyThreshold || 1)
+          ? Math.min(current.level + 1, 5)
+          : current.level;
+
+    updateScore(gameType, {
+      wordsLearned: Math.max(current.wordsLearned, wordsLearned),
+      bestTime: newBest,
+      totalAttempts: current.totalAttempts + 1,
+      correctAnswers: current.correctAnswers + correct,
+      level: nextLevel,
+    });
+
+    void awardFrenchGamePoints({
+      gameTitle,
+      correct,
+      total,
+      wordsLearned,
+      levelUp: nextLevel > current.level,
+      beatBest: current.bestTime > 0 && newBest < current.bestTime,
+    });
+  };
+
+  const awardFrenchGamePoints = async (params: {
+    gameTitle: string;
+    total: number;
+    correct: number;
+    wordsLearned: number;
+    levelUp?: boolean;
+    beatBest?: boolean;
+  }) => {
+    if (!family?.id || !activeLearnerId) {
+      return;
+    }
+
+    const accuracy = params.total > 0 ? params.correct / params.total : 0;
+    const completionBonus = accuracy >= 1 ? 2 : accuracy >= 0.8 ? 1 : 0;
+    const vocabularyBonus = Math.min(8, Math.max(0, Math.ceil(params.wordsLearned / 3)));
+    let awardedPoints = 0;
+
+    const completionEvent = await learnerPointsLedgerService.award({
+      familyId: family.id,
+      learnerId: activeLearnerId,
+      actionId: 'french_game_completed',
+      description: `Completed the ${params.gameTitle} French game.`,
+      pointsOverride: 8 + completionBonus,
+    });
+    if (completionEvent) {
+      awardedPoints += completionEvent.points;
+    }
+
+    if (vocabularyBonus > 0) {
+      const vocabEvent = await learnerPointsLedgerService.award({
+        familyId: family.id,
+        learnerId: activeLearnerId,
+        actionId: 'french_vocab_bonus',
+        description: `Learned ${params.wordsLearned} French words in ${params.gameTitle}.`,
+        pointsOverride: vocabularyBonus,
+      });
+      if (vocabEvent) {
+        awardedPoints += vocabEvent.points;
+      }
+    }
+
+    if (params.levelUp || params.beatBest) {
+      const masteryEvent = await learnerPointsLedgerService.award({
+        familyId: family.id,
+        learnerId: activeLearnerId,
+        actionId: 'french_mastery_bonus',
+        description: `${params.levelUp ? 'Levelled up' : 'Beat a personal best'} in ${params.gameTitle}.`,
+      });
+      if (masteryEvent) {
+        awardedPoints += masteryEvent.points;
+      }
+    }
+
+    if (awardedPoints > 0) {
+      await syncLearnerPointsBalance(family.id, activeLearnerId);
+      toast.success(`+${awardedPoints} points for ${params.gameTitle}`);
+    }
   };
 
   return (
@@ -442,18 +549,11 @@ export function FrenchReadingPage() {
       {activeGame === 'days' && (
         <DaysOfWeekGame
           score={scores.daysOfWeek}
-          onComplete={(wordsLearned, correct, total, time) => {
-            const current = scores.daysOfWeek;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            const newLevel = correct >= total * 0.8 ? Math.min(current.level + 1, 5) : current.level;
-            updateScore('days', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: newLevel,
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('days', 'Days of the Week', wordsLearned, correct, total, time, {
+              accuracyThreshold: 0.8,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -461,17 +561,11 @@ export function FrenchReadingPage() {
       {activeGame === 'months' && (
         <MonthsGame
           score={scores.monthsOfYear}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.monthsOfYear;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('months', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('months', 'Months of the Year', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -479,17 +573,11 @@ export function FrenchReadingPage() {
       {activeGame === 'seasons' && (
         <SeasonsGame
           score={scores.seasons}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.seasons;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('seasons', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('seasons', 'Seasons and Phrases', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -497,17 +585,11 @@ export function FrenchReadingPage() {
       {activeGame === 'numbers' && (
         <NumbersGame
           score={scores.numbers}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.numbers;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('numbers', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('numbers', 'Numbers 1-100', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -515,17 +597,11 @@ export function FrenchReadingPage() {
       {activeGame === 'sounds' && (
         <PureSoundsGame
           score={scores.pureSounds}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.pureSounds;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('sounds', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('sounds', 'Pure Sounds', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -533,17 +609,11 @@ export function FrenchReadingPage() {
       {activeGame === 'cv-syllables' && (
         <CVSyllablesGame
           score={scores.cvSyllables}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.cvSyllables;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('cv-syllables', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('cv-syllables', 'CV Syllables', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -551,17 +621,11 @@ export function FrenchReadingPage() {
       {activeGame === 'syllable-stack' && (
         <SyllableStackGame
           score={scores.syllableStack}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.syllableStack;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('syllable-stack', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('syllable-stack', 'Syllable Stacking', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -569,17 +633,11 @@ export function FrenchReadingPage() {
       {activeGame === 'sound-families' && (
         <SoundFamiliesGame
           score={scores.soundFamilies}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.soundFamilies;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('sound-families', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('sound-families', 'Sound Families', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -587,17 +645,11 @@ export function FrenchReadingPage() {
       {activeGame === 'whole-words' && (
         <WholeWordsGame
           score={scores.wholeWords}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.wholeWords;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('whole-words', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('whole-words', 'Whole Words', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -605,17 +657,11 @@ export function FrenchReadingPage() {
       {activeGame === 'homophones' && (
         <HomophonesGame
           score={scores.homophones}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.homophones;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('homophones', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('homophones', 'Homophones', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -623,17 +669,11 @@ export function FrenchReadingPage() {
       {activeGame === 'nouns' && (
         <NounsGame
           score={scores.nouns}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.nouns;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('nouns', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('nouns', 'Nouns', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -641,17 +681,11 @@ export function FrenchReadingPage() {
       {activeGame === 'verbs' && (
         <VerbsGame
           score={scores.verbs}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.verbs;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('verbs', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('verbs', 'Verbs and Adverbs', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -659,17 +693,11 @@ export function FrenchReadingPage() {
       {activeGame === 'adjectives' && (
         <AdjectivesGame
           score={scores.adjectives}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.adjectives;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('adjectives', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('adjectives', 'Adjectives', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -677,17 +705,11 @@ export function FrenchReadingPage() {
       {activeGame === 'pronouns' && (
         <PronounsGame
           score={scores.pronouns}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.pronouns;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('pronouns', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('pronouns', 'Pronouns', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -695,17 +717,11 @@ export function FrenchReadingPage() {
       {activeGame === 'conjunctions' && (
         <ConjunctionsGame
           score={scores.conjunctions}
-          onComplete={(wordsLearned, correct, _total, time) => {
-            const current = scores.conjunctions;
-            const newBest = current.bestTime === 0 || time < current.bestTime ? time : current.bestTime;
-            updateScore('conjunctions', {
-              wordsLearned: Math.max(current.wordsLearned, wordsLearned),
-              bestTime: newBest,
-              totalAttempts: current.totalAttempts + 1,
-              correctAnswers: current.correctAnswers + correct,
-              level: Math.min(current.level + 1, 5),
-            });
-          }}
+          onComplete={(wordsLearned, correct, total, time) =>
+            handleFrenchGameCompletion('conjunctions', 'Conjunctions', wordsLearned, correct, total, time, {
+              alwaysLevelUp: true,
+            })
+          }
           onClose={handleCloseGame}
         />
       )}
@@ -772,7 +788,7 @@ function GameCard({ game, score, onPlay, showLayer }: {
 // ============ FOUNDATION GAMES ============
 
 // Days of the Week Game
-function DaysOfWeekGame({ score: _score, onComplete, onClose }: {
+function DaysOfWeekGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -921,7 +937,7 @@ function DaysOfWeekGame({ score: _score, onComplete, onClose }: {
 }
 
 // Months Game
-function MonthsGame({ score: _score, onComplete, onClose }: {
+function MonthsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -1063,7 +1079,7 @@ function MonthsGame({ score: _score, onComplete, onClose }: {
 }
 
 // Seasons Game
-function SeasonsGame({ score: _score, onComplete, onClose }: {
+function SeasonsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -1202,7 +1218,7 @@ function SeasonsGame({ score: _score, onComplete, onClose }: {
 
 
 // Numbers Game - French counting logic
-function NumbersGame({ score: _score, onComplete, onClose }: {
+function NumbersGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -1382,7 +1398,7 @@ function NumbersGame({ score: _score, onComplete, onClose }: {
 // ============ PHONICS GAMES ============
 
 // Pure Sounds Game (Layer 1)
-function PureSoundsGame({ score: _score, onComplete, onClose }: {
+function PureSoundsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -1559,7 +1575,7 @@ function PureSoundsGame({ score: _score, onComplete, onClose }: {
 
 
 // CV Syllables Game (Layer 2)
-function CVSyllablesGame({ score: _score, onComplete, onClose }: {
+function CVSyllablesGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -1708,7 +1724,7 @@ function CVSyllablesGame({ score: _score, onComplete, onClose }: {
 }
 
 // Syllable Stack Game (Layer 3)
-function SyllableStackGame({ score: _score, onComplete, onClose }: {
+function SyllableStackGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -1860,7 +1876,7 @@ function SyllableStackGame({ score: _score, onComplete, onClose }: {
 
 
 // Sound Families Game (Layer 4)
-function SoundFamiliesGame({ score: _score, onComplete, onClose }: {
+function SoundFamiliesGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -2005,7 +2021,7 @@ function SoundFamiliesGame({ score: _score, onComplete, onClose }: {
 }
 
 // Whole Words Game (Layer 5)
-function WholeWordsGame({ score: _score, onComplete, onClose }: {
+function WholeWordsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -2136,7 +2152,7 @@ function WholeWordsGame({ score: _score, onComplete, onClose }: {
 
 
 // Homophones Game (Layer 6)
-function HomophonesGame({ score: _score, onComplete, onClose }: {
+function HomophonesGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -2290,7 +2306,7 @@ function HomophonesGame({ score: _score, onComplete, onClose }: {
 // ============ GRAMMAR GAMES ============
 
 // Nouns Game (Layer 7)
-function NounsGame({ score: _score, onComplete, onClose }: {
+function NounsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -2419,7 +2435,7 @@ function NounsGame({ score: _score, onComplete, onClose }: {
 
 
 // Verbs Game (Layer 8)
-function VerbsGame({ score: _score, onComplete, onClose }: {
+function VerbsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -2539,7 +2555,7 @@ function VerbsGame({ score: _score, onComplete, onClose }: {
 
 
 // Adjectives Game (Layer 9)
-function AdjectivesGame({ score: _score, onComplete, onClose }: {
+function AdjectivesGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -2658,7 +2674,7 @@ function AdjectivesGame({ score: _score, onComplete, onClose }: {
 
 
 // Pronouns Game (Layer 10)
-function PronounsGame({ score: _score, onComplete, onClose }: {
+function PronounsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;
@@ -2769,7 +2785,7 @@ function PronounsGame({ score: _score, onComplete, onClose }: {
 
 
 // Conjunctions Game (Layer 11)
-function ConjunctionsGame({ score: _score, onComplete, onClose }: {
+function ConjunctionsGame({ onComplete, onClose }: {
   score: FrenchScore;
   onComplete: (wordsLearned: number, correct: number, total: number, time: number) => void;
   onClose: () => void;

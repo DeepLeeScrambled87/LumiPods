@@ -1,4 +1,5 @@
 import { progressDataService } from './dataService';
+import { learnerPointsLedgerService } from './learnerPointsLedgerService';
 import { syncLearnerPointsBalance } from './pointsBalanceService';
 import type { DailySchedule } from '../types/schedule';
 import type { DailyProgress } from '../types/progress';
@@ -47,5 +48,19 @@ export const syncScheduleProgress = async (schedule: DailySchedule): Promise<voi
     schedule.learnerId,
     buildDailyProgressFromSchedule(schedule)
   );
+
+  const trackedBlocks = schedule.blocks.filter((block) => isTrackedBlock(block.type));
+  const completedTrackedBlocks = trackedBlocks.filter((block) => block.status === 'completed');
+
+  if (trackedBlocks.length > 0 && completedTrackedBlocks.length === trackedBlocks.length) {
+    await learnerPointsLedgerService.award({
+      familyId: schedule.familyId,
+      learnerId: schedule.learnerId,
+      actionId: 'full_day_completed',
+      description: `Completed the full learning day on ${schedule.date}.`,
+      sourceKey: `full-day:${schedule.learnerId}:${schedule.date}`,
+    });
+  }
+
   await syncLearnerPointsBalance(schedule.familyId, schedule.learnerId);
 };
